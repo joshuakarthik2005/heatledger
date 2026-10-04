@@ -1,0 +1,607 @@
+{
+ "main": {
+  "b": {
+   "kwh_t": 589.8179746355053,
+   "rs_t": 4142.2553726126725,
+   "kg_t": 418.7707619912087,
+   "gkg_t": 418.7707619912087,
+   "heats_day": 5.346153846153846,
+   "fill": 0.7115191290191292,
+   "hold_h_day": 4.006030200482246,
+   "late_min_day": 36.15187692307693,
+   "viol_day": 0.6153846153846154,
+   "mixed_day": 0.5897435897435898
+  },
+  "p": {
+   "kwh_t": 575.6535434372399,
+   "rs_t": 4047.884337847285,
+   "kg_t": 408.7140158404403,
+   "gkg_t": 408.7140158404403,
+   "heats_day": 7.397435897435898,
+   "fill": 0.5164801756885091,
+   "hold_h_day": 1.1800191452991453,
+   "late_min_day": 9.29184615384615,
+   "viol_day": 0.0,
+   "mixed_day": 0.28205128205128205
+  },
+  "save_kwh_t": 14.164431198265333,
+  "save_rs_t": 94.37103476538732,
+  "save_kg_t": 10.05674615076839,
+  "save_gkg_t": 10.05674615076839,
+  "save_pct": 2.401491953007815,
+  "tonnes": 878.46,
+  "days": 78
+ },
+ "seeds": {
+  "save_kwh_t": [
+   14.97377213153017,
+   0.604860625791993
+  ],
+  "save_rs_t": [
+   102.29161104450175,
+   4.795121149149465
+  ],
+  "save_kg_t": [
+   10.631378213386427,
+   0.42945104431231834
+  ],
+  "save_pct": [
+   2.5323859785209524,
+   0.09819562238302841
+  ]
+ },
+ "lead": [
+  {
+   "lead": 0,
+   "save_kwh_t": 16.571287135549596,
+   "save_rs_t": 107.02723633836285,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 37.24397948717951
+  },
+  {
+   "lead": 120,
+   "save_kwh_t": 14.164431198265333,
+   "save_rs_t": 94.37103476538732,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  },
+  {
+   "lead": 240,
+   "save_kwh_t": 14.164431198265333,
+   "save_rs_t": 94.37103476538732,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  },
+  {
+   "lead": 360,
+   "save_kwh_t": 14.164431198265333,
+   "save_rs_t": 94.37103476538732,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  }
+ ],
+ "baseline_quality": [
+  {
+   "buffer_min": "0-10",
+   "save_kwh_t": 6.424022852779444,
+   "hold_h_baseline": 3.1342815959725674,
+   "hold_h_planned": 1.1800191452991453,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  },
+  {
+   "buffer_min": "5-25",
+   "save_kwh_t": 9.794687836145386,
+   "hold_h_baseline": 3.5138962576761164,
+   "hold_h_planned": 1.1800191452991453,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  },
+  {
+   "buffer_min": "10-50",
+   "save_kwh_t": 14.164431198265333,
+   "hold_h_baseline": 4.006030200482246,
+   "hold_h_planned": 1.1800191452991453,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  },
+  {
+   "buffer_min": "20-70",
+   "save_kwh_t": 18.08033303720697,
+   "hold_h_baseline": 4.447051114512591,
+   "hold_h_planned": 1.1800191452991453,
+   "late_baseline": 36.15187692307693,
+   "late_planned": 9.29184615384615
+  }
+ ],
+ "sens": {
+  "fixed": [
+   0,
+   30,
+   60,
+   90
+  ],
+  "hold": [
+   50,
+   100,
+   150
+  ],
+  "save_kwh_t": [
+   [
+    13.159125965585645,
+    28.284856612944054,
+    42.734858555174355
+   ],
+   [
+    3.4621540424469686,
+    20.539441581989877,
+    35.02118285095719
+   ],
+   [
+    -1.976455659336807,
+    13.216644150154025,
+    27.193349337791005
+   ],
+   [
+    -6.468447364074564,
+    8.017776713650392,
+    19.880637843036766
+   ]
+  ],
+  "late_baseline_planned": [
+   [
+    [
+     39.06201025641027,
+     10.461087179487189
+    ],
+    [
+     39.06201025641027,
+     10.487241025641033
+    ],
+    [
+     39.06201025641027,
+     10.523384615384622
+    ]
+   ],
+   [
+    [
+     39.06201025641027,
+     10.453005128205136
+    ],
+    [
+     39.06201025641027,
+     10.46916923076924
+    ],
+    [
+     39.06201025641027,
+     10.523384615384622
+    ]
+   ],
+   [
+    [
+     39.06201025641027,
+     10.448000000000006
+    ],
+    [
+     39.06201025641027,
+     10.465128205128213
+    ],
+    [
+     39.06201025641027,
+     10.49493333333334
+    ]
+   ],
+   [
+    [
+     39.06201025641027,
+     10.448000000000006
+    ],
+    [
+     39.06201025641027,
+     10.458584615384622
+    ],
+    [
+     39.06201025641027,
+     10.47282051282052
+    ]
+   ]
+  ]
+ },
+ "calibration": {
+  "truth": {
+   "fixed": 90,
+   "hold_kw": 50
+  },
+  "estimate": {
+   "n": 35,
+   "hold_kw_est": 52.52513453314306,
+   "fixed_est": 93.10564647633521,
+   "kwh_per_t_melt_est": 523.6862702897943
+  },
+  "saving_kwh_t_calibrated": -3.1407382063906653,
+  "saving_kwh_t_uncalibrated": -3.8459996867085238,
+  "late_planned_calibrated": 9.2895282051282,
+  "late_planned_uncalibrated": 9.29184615384615,
+  "late_baseline": 36.15187692307693
+ },
+ "detection": {
+  "heats": 502,
+  "matched": 502,
+  "match_pct": 100.0,
+  "false_positives": 0,
+  "mean_start_err_min": 3.6097411531021897,
+  "mean_end_err_min": 3.176192828685257,
+  "mean_energy_err_pct": 10.385010116196622,
+  "median_energy_err_pct": 0.09880021237498185
+ },
+ "receipt": [
+  {
+   "heat": "H01",
+   "start": "08:00",
+   "end": "08:25",
+   "tonnes": 1.16,
+   "kwh": 653.2,
+   "kwh_per_t": 563.1,
+   "rs_per_t": 3937.0,
+   "kgco2e_per_t": 399.8,
+   "prev_hash": "000000000000",
+   "hash": "33f8424fce61"
+  },
+  {
+   "heat": "H02",
+   "start": "08:40",
+   "end": "09:10",
+   "tonnes": 1.45,
+   "kwh": 799.0,
+   "kwh_per_t": 551.0,
+   "rs_per_t": 3854.0,
+   "kgco2e_per_t": 391.2,
+   "prev_hash": "33f8424fce61",
+   "hash": "47a1eb6781a2"
+  },
+  {
+   "heat": "H03",
+   "start": "12:10",
+   "end": "12:35",
+   "tonnes": 1.17,
+   "kwh": 656.6,
+   "kwh_per_t": 561.2,
+   "rs_per_t": 3932.0,
+   "kgco2e_per_t": 398.4,
+   "prev_hash": "47a1eb6781a2",
+   "hash": "56d2daa9a733"
+  },
+  {
+   "heat": "H04",
+   "start": "12:50",
+   "end": "13:55",
+   "tonnes": 2.88,
+   "kwh": 1536.6,
+   "kwh_per_t": 533.5,
+   "rs_per_t": 3732.0,
+   "kgco2e_per_t": 378.8,
+   "prev_hash": "56d2daa9a733",
+   "hash": "f71ad1b07783"
+  },
+  {
+   "heat": "H05",
+   "start": "14:10",
+   "end": "14:42",
+   "tonnes": 1.58,
+   "kwh": 863.4,
+   "kwh_per_t": 546.5,
+   "rs_per_t": 3825.0,
+   "kgco2e_per_t": 388.0,
+   "prev_hash": "f71ad1b07783",
+   "hash": "5cdfc04537e8"
+  },
+  {
+   "heat": "H06",
+   "start": "15:00",
+   "end": "15:29",
+   "tonnes": 1.43,
+   "kwh": 787.1,
+   "kwh_per_t": 550.5,
+   "rs_per_t": 3853.0,
+   "kgco2e_per_t": 390.8,
+   "prev_hash": "5cdfc04537e8",
+   "hash": "cbcba7215e9c"
+  },
+  {
+   "heat": "H07",
+   "start": "15:40",
+   "end": "16:07",
+   "tonnes": 1.32,
+   "kwh": 731.2,
+   "kwh_per_t": 553.9,
+   "rs_per_t": 3878.0,
+   "kgco2e_per_t": 393.3,
+   "prev_hash": "cbcba7215e9c",
+   "hash": "c97281f5a5ae"
+  },
+  {
+   "heat": "H08",
+   "start": "16:20",
+   "end": "17:50",
+   "tonnes": 2.27,
+   "kwh": 1284.2,
+   "kwh_per_t": 565.7,
+   "rs_per_t": 3971.0,
+   "kgco2e_per_t": 401.7,
+   "prev_hash": "c97281f5a5ae",
+   "hash": "89b2b586c3fd"
+  }
+ ],
+ "detection_v2": {
+  "high_hold_100kW": {
+   "raw": {
+    "heats": 502,
+    "matched": 502,
+    "false_positives": 0,
+    "start_err_min": 3.6097411531021897,
+    "end_err_min": 3.176192828685257,
+    "energy_err_mean_pct": 10.385010116196622,
+    "energy_err_median_pct": 0.09880021237498185,
+    "energy_err_p95_pct": 95.92137438230058,
+    "energy_err_max_pct": 377.16555996893976
+   },
+   "cleaned": {
+    "heats": 502,
+    "matched": 502,
+    "false_positives": 0,
+    "start_err_min": 0.04305263214762831,
+    "end_err_min": 2.4642693227091637,
+    "energy_err_mean_pct": 1.6635614915917232,
+    "energy_err_median_pct": 0.4055494095832736,
+    "energy_err_p95_pct": 5.188738665735282,
+    "energy_err_max_pct": 13.613602906487525
+   }
+  },
+  "low_hold_50kW": {
+   "raw": {
+    "heats": 467,
+    "matched": 467,
+    "false_positives": 0,
+    "start_err_min": 3.671644896103638,
+    "end_err_min": 15.847323340471089,
+    "energy_err_mean_pct": 8.9622804005491,
+    "energy_err_median_pct": 0.18339575366095423,
+    "energy_err_p95_pct": 90.83994329391224,
+    "energy_err_max_pct": 234.7430830839216
+   },
+   "cleaned": {
+    "heats": 467,
+    "matched": 467,
+    "false_positives": 0,
+    "start_err_min": 0.04627927481393879,
+    "end_err_min": 8.460959314775161,
+    "energy_err_mean_pct": 1.6664557489459024,
+    "energy_err_median_pct": 0.5639097410300521,
+    "energy_err_p95_pct": 4.860902970025253,
+    "energy_err_max_pct": 16.637267853290272
+   }
+  }
+ },
+ "tamper": {
+  "honest": "OK",
+  "edit_one_heat": "FAIL: heat 2 payload altered",
+  "rewrite_chain_without_anchor_check": "OK",
+  "rewrite_chain_with_anchor_check": "FAIL: head hash does not match the externally anchored value"
+ },
+ "annual_saving_lakh": {
+  "100": {
+   "tight_operator": 0.51,
+   "central": 1.13,
+   "loose_operator": 1.45
+  },
+  "300": {
+   "tight_operator": 1.54,
+   "central": 3.4,
+   "loose_operator": 4.34
+  },
+  "600": {
+   "tight_operator": 3.07,
+   "central": 6.79,
+   "loose_operator": 8.68
+  }
+ },
+ "rs_per_kwh_saved": 6.66253614031071,
+ "guardrails": {
+  "guard_off_4seeds": {
+   "save_kwh_t": 15.044185456749034,
+   "save_rs_t": 101.57431315962242,
+   "save_kg_t": 10.68137167429181,
+   "heats_b": 5.314102564102564,
+   "heats_p": 7.423076923076923,
+   "fill_b": 0.7094687627187628,
+   "fill_p": 0.5086619395265229,
+   "hold_b": 4.131803472184263,
+   "hold_p": 1.1861213675213678,
+   "late_b": 34.37282564102564,
+   "late_p": 7.454471794871787,
+   "viol_b": 0.7403846153846154,
+   "viol_p": 0.0,
+   "mixed_b": 0.6602564102564102,
+   "mixed_p": 0.27564102564102566
+  },
+  "guard_on_default": {
+   "save_kwh_t": 15.477748976970986,
+   "save_rs_t": 104.74102070327501,
+   "save_kg_t": 10.989201773649413,
+   "heats_b": 5.714743589743589,
+   "heats_p": 7.6826923076923075,
+   "fill_b": 0.6610694910799078,
+   "fill_p": 0.4897484398317732,
+   "hold_b": 3.934850685426883,
+   "hold_p": 1.0248743162393164,
+   "late_b": 30.084141025641024,
+   "late_p": 8.693397435897431,
+   "viol_b": 0.6474358974358975,
+   "viol_p": 0.0,
+   "mixed_b": 0.0,
+   "mixed_p": 0.0
+  },
+  "guard_on_strict": {
+   "save_kwh_t": 15.605806521421158,
+   "save_rs_t": 105.5161198198922,
+   "save_kg_t": 11.080122630209033,
+   "heats_b": 5.714743589743589,
+   "heats_p": 7.891025641025641,
+   "fill_b": 0.6610694910799078,
+   "fill_p": 0.47564586725003394,
+   "hold_b": 3.934850685426883,
+   "hold_p": 0.8855741025641026,
+   "late_b": 30.084141025641024,
+   "late_p": 9.622987179487172,
+   "viol_b": 1.5448717948717947,
+   "viol_p": 0.0,
+   "mixed_b": 0.0,
+   "mixed_p": 0.0
+  }
+ },
+ "lateness_tradeoff": [
+  {
+   "world": "default (fixed 60 kWh, hold 100 kW)",
+   "late_pen": 5,
+   "save_kwh_t": 33.8,
+   "late_b": 36.2,
+   "late_p": 137.2,
+   "heats_p": 5.4
+  },
+  {
+   "world": "default (fixed 60 kWh, hold 100 kW)",
+   "late_pen": 20,
+   "save_kwh_t": 17.4,
+   "late_b": 36.2,
+   "late_p": 18.0,
+   "heats_p": 7.1
+  },
+  {
+   "world": "default (fixed 60 kWh, hold 100 kW)",
+   "late_pen": 50,
+   "save_kwh_t": 15.3,
+   "late_b": 36.2,
+   "late_p": 10.4,
+   "heats_p": 7.4
+  },
+  {
+   "world": "default (fixed 60 kWh, hold 100 kW)",
+   "late_pen": 150,
+   "save_kwh_t": 14.4,
+   "late_b": 36.2,
+   "late_p": 9.4,
+   "heats_p": 7.4
+  },
+  {
+   "world": "default (fixed 60 kWh, hold 100 kW)",
+   "late_pen": 500,
+   "save_kwh_t": 14.2,
+   "late_b": 36.2,
+   "late_p": 9.3,
+   "heats_p": 7.4
+  },
+  {
+   "world": "low-hold (fixed 90 kWh, hold 50 kW)",
+   "late_pen": 5,
+   "save_kwh_t": 13.5,
+   "late_b": 36.2,
+   "late_p": 130.7,
+   "heats_p": 5.0
+  },
+  {
+   "world": "low-hold (fixed 90 kWh, hold 50 kW)",
+   "late_pen": 20,
+   "save_kwh_t": 4.9,
+   "late_b": 36.2,
+   "late_p": 32.2,
+   "heats_p": 5.3
+  },
+  {
+   "world": "low-hold (fixed 90 kWh, hold 50 kW)",
+   "late_pen": 50,
+   "save_kwh_t": -2.4,
+   "late_b": 36.2,
+   "late_p": 11.6,
+   "heats_p": 6.3
+  },
+  {
+   "world": "low-hold (fixed 90 kWh, hold 50 kW)",
+   "late_pen": 150,
+   "save_kwh_t": -3.8,
+   "late_b": 36.2,
+   "late_p": 9.4,
+   "heats_p": 6.5
+  },
+  {
+   "world": "low-hold (fixed 90 kWh, hold 50 kW)",
+   "late_pen": 500,
+   "save_kwh_t": -4.0,
+   "late_b": 36.2,
+   "late_p": 9.3,
+   "heats_p": 6.5
+  }
+ ],
+ "solar_scenario": {
+  "150": {
+   "peak_kw": 150.0,
+   "base_gkg_t": 382.0485843193348,
+   "blind_gkg_t": 384.0697787501037,
+   "aware_gkg_t": 381.5809263033301,
+   "base_rs_t": 3778.2742090085208,
+   "blind_rs_t": 3805.3494434059508,
+   "aware_rs_t": 3780.5766033609775,
+   "solar_share_base": 0.08769040488228919,
+   "solar_share_blind": 0.06029701976248736,
+   "solar_share_aware": 0.07993587764071575,
+   "late_base": 36.15187692307693,
+   "late_blind": 9.29184615384615,
+   "late_aware": 9.282030769230763,
+   "kwh_t_base": 589.8179746355053,
+   "kwh_t_blind": 575.6535434372399,
+   "kwh_t_aware": 584.1309440398095
+  },
+  "300": {
+   "peak_kw": 300.0,
+   "base_gkg_t": 360.04439135160624,
+   "blind_gkg_t": 363.8370673880658,
+   "aware_gkg_t": 359.0805555461176,
+   "base_rs_t": 3561.3314614393635,
+   "blind_rs_t": 3605.872007442196,
+   "aware_rs_t": 3558.294817916402,
+   "solar_share_base": 0.14023512615915457,
+   "solar_share_blind": 0.1098003658134743,
+   "solar_share_aware": 0.1376277196219151,
+   "late_base": 36.15187692307693,
+   "late_blind": 9.29184615384615,
+   "late_aware": 9.280687179487174,
+   "kwh_t_base": 589.8179746355053,
+   "kwh_t_blind": 575.6535434372399,
+   "kwh_t_aware": 586.460479818331
+  },
+  "600": {
+   "peak_kw": 600.0,
+   "base_gkg_t": 320.9484737105358,
+   "blind_gkg_t": 324.80494664679253,
+   "aware_gkg_t": 315.3293130312195,
+   "base_rs_t": 3175.878752302049,
+   "blind_rs_t": 3221.0482818240084,
+   "aware_rs_t": 3127.203853716206,
+   "solar_share_base": 0.23359388276186888,
+   "solar_share_blind": 0.2053001999970694,
+   "solar_share_aware": 0.24326599199754717,
+   "late_base": 36.15187692307693,
+   "late_blind": 9.29184615384615,
+   "late_aware": 9.292317948717942,
+   "kwh_t_base": 589.8179746355053,
+   "kwh_t_blind": 575.6535434372399,
+   "kwh_t_aware": 586.898154840529
+  }
+ },
+ "labels": {
+  "headline": "90 calendar days = 78 working days, seed 1 (4-seed means where stated)",
+  "sensitivity_grid": "45 calendar days = 39 working days, seed 1",
+  "dial": "90 calendar days, seed 1",
+  "solar": "90 calendar days, seed 1, clear-day solar profile, solar kWh free at the margin (assumptions)",
+  "metric": "furnace kWh per tonne of metal tapped (not whole-foundry kWh per tonne of castings)"
+ }
+}
