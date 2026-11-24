@@ -81,20 +81,120 @@
   $("assump").innerHTML = [["Capacity", "3.0 t"], ["Melt energy", "506 kWh/t"], ["Fixed per heat", "60 kWh (assumption)"], ["Holding power", "100 kW (assumption)"], ["Melt power", "1,500 kW"], ["Tariff", "₹7/kWh; night ×0.90 (22–06); peak ×1.20 (18–22), illustrative"], ["Shiftable window", "240 min"], ["Late penalty", "₹500/min"], ["Emission factor", "0.710 tCO₂/MWh (CEA FY2024-25 v21, provisional)"]].map(r => "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>").join("");
 
   // ---------- Tab 4 ----------
-  const SAMPLE = "heat,start,tap,tonnes,kwh,hold_min\n1,06:00,07:35,1.10,640,12\n2,08:00,09:30,1.25,722,5\n3,10:10,11:55,1.05,640,25\n4,12:20,13:50,1.20,690,8\n5,14:15,16:00,1.15,684,22\n6,16:30,18:05,1.30,742,6\n7,19:00,20:30,1.18,690,10";
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const abs = m => clock(m) + (m >= 1440 ? " +" + Math.floor(m / 1440) + "d" : "");
+  const hid = n => "H" + String(n).padStart(2, "0");
+  document.querySelectorAll("#modes button").forEach(b => b.onclick = () => {
+    document.querySelectorAll("#modes button").forEach(x => x.classList.toggle("on", x === b));
+    ["mLog", "mSer"].forEach(id => $(id).style.display = id === b.dataset.m ? "block" : "none"); });
+
+  // --- mode 1: heat log ---
+  const SAMPLE = "heat,grade,weight_kg,start,tap,kwh,remarks\n1,SYN-A,1100,18:10,19:50,640,\n2,SYN-A,1250,20:20,21:55,722,\n3,SYN-B,1050,22:30,00:15,690,long wait for pour\n4,SYN-A,1200,00:40,02:10,690,\n5,SYN-B,1150,02:45,04:30,684,hold for ladle\n6,SYN-A,1300,05:10,06:40,742,\n7,SYN-A,1180,07:20,08:50,690,";
   let lastRows = [];
-  function calc() { const rows = E.parseCsv($("csv").value), ef = +$("ef").value, tar = +$("tar").value; const good = []; let bad = 0, prev = E.ZERO; lastRows = [];
-    rows.forEach((r, n) => { const s = E.parseClock(r.start), t = E.parseClock(r.tap), tn = +r.tonnes, kwh = +r.kwh; if (!(tn > 0) || !(kwh > 0) || isNaN(s) || isNaN(t)) { bad++; return; }
-      const e = t < s ? t + 1440 : t, perT = kwh / tn, cost = tar * kwh * E.avgm(s, e), hold = r.hold_min ? +r.hold_min : null;
-      const pl = E.payload({ id: r.heat ? "H" + String(r.heat).padStart(2, "0") : "H" + (n + 1), start: s, end: e, tonnes: tn, kw: [kwh] }, prev), hash = E.sha256(pl);
-      good.push({ heat: r.heat || n + 1, window: clock(s) + "–" + clock(e), tonnes: tn, kwh, perT, rsT: cost / tn, kg: perT * ef / 1000 * 1000, hold, hash: hash.slice(0, 12), prev: prev.slice(0, 12) }); prev = hash; });
-    if (!good.length) { $("outCard").style.display = "block"; $("sumTiles").innerHTML = ""; $("tbl").innerHTML = "<p class=bad>No valid rows. Check the column names and HH:MM times.</p>"; return; }
-    lastRows = good; const T = good.reduce((a, g) => a + g.tonnes, 0), K = good.reduce((a, g) => a + g.kwh, 0), v = good.map(g => g.perT), mn = Math.min.apply(null, v), mxv = Math.max.apply(null, v);
-    $("sumTiles").innerHTML = tile(good.length, "heats read" + (bad ? " (" + bad + " rows skipped)" : "")) + tile(T.toFixed(2) + " t", "total metal") + tile(Math.round(K / T) + " kWh/t", "weighted average (range " + Math.round(mn) + "–" + Math.round(mxv) + ")") + tile(Math.round(K / T * ef) + " kgCO₂e/t", "at " + ef + " tCO₂/MWh");
-    $("tbl").innerHTML = "<table><tr><th>Heat</th><th>Window</th><th>t</th><th>kWh</th><th>kWh/t</th><th>₹/t</th><th>kgCO₂e/t</th><th>Hold min</th><th>Hash</th></tr>" + good.map(g => "<tr><td>" + g.heat + "</td><td>" + g.window + "</td><td>" + g.tonnes + "</td><td>" + g.kwh + "</td><td>" + Math.round(g.perT) + "</td><td>₹" + Math.round(g.rsT) + "</td><td>" + Math.round(g.perT * ef) + "</td><td>" + (g.hold == null ? "–" : g.hold) + "</td><td class=hash>" + g.hash + "</td></tr>").join("") + "</table>";
-    $("yNote").textContent = "Receipts from a heat log hash the totals you entered, not a 1-minute meter series, so they prove the log was not changed afterwards, not that it was right. Meter-grade receipts need the CT meter."; $("outCard").style.display = "block"; }
+  function calc() {
+    const P = E.parseHeatLog($("csv").value), ef = +$("ef").value, tar = +$("tar").value; lastRows = []; $("outCard").style.display = "block"; $("flagBox").innerHTML = "";
+    $("lWarn").innerHTML = P.errors.concat(P.warnings).map(w => '<div class="warn">' + esc(w) + "</div>").join("");
+    if (!P.rows.length) { $("sumTiles").innerHTML = ""; $("tbl").innerHTML = "<p class=bad>" + (P.errors.length ? "Fix the header and try again." : "No valid rows. Check HH:MM times, weights and kWh.") + "</p>" +
+      P.skipped.map(s => "<div class=mut>line " + s.line + ": " + s.reason + "</div>").join(""); return; }
+    let prev = E.ZERO; const hasGrade = P.rows.some(r => r.grade), hasRem = P.rows.some(r => r.remarks), hasHold = P.rows.some(r => r.hold != null);
+    const good = P.rows.map((r, n) => { const dur = r.tap - r.start, cost = tar * r.kwh * E.avgm(r.start % 1440, r.start % 1440 + Math.min(dur, 2880));
+      const pl = E.payload({ id: hid(n + 1), start: r.start, end: r.tap, tonnes: r.tonnes, kw: [r.kwh] }, prev), hash = E.sha256(pl);
+      const g = Object.assign({}, r, { rsT: cost / r.tonnes, hash: hash.slice(0, 12), prev: prev.slice(0, 12) }); prev = hash; return g; });
+    lastRows = good; const S = E.logStats(good, ef);
+    const sk = P.skipped.length ? " (" + P.skipped.length + " rows skipped)" : "";
+    $("sumTiles").innerHTML = tile(good.length, "heats read" + sk) + tile(S.all.tonnes.toFixed(2) + " t", "total metal") + tile(Math.round(S.all.kwh_t) + " kWh/t", "weighted average (range " + Math.round(S.min) + "–" + Math.round(S.max) + ")") + tile(Math.round(S.all.kg_t) + " kgCO₂e/t", "at " + ef + " tCO₂/MWh");
+    $("tbl").innerHTML = "<table><tr><th>Heat</th>" + (hasGrade ? "<th>Grade</th>" : "") + "<th>Window</th><th>t</th><th>kWh</th><th>kWh/t</th><th>₹/t</th><th>kgCO₂e/t</th>" + (hasHold ? "<th>Hold min</th>" : "") + (hasRem ? "<th>Remarks</th>" : "") + "<th>Hash</th></tr>" +
+      good.map(g => "<tr" + (g.flagged ? ' class="flag"' : "") + "><td>" + esc(g.heat) + "</td>" + (hasGrade ? "<td>" + esc(g.grade) + "</td>" : "") + "<td>" + abs(g.start) + "–" + abs(g.tap) + "</td><td>" + g.tonnes.toFixed(3) + "</td><td>" + g.kwh + "</td><td>" + Math.round(g.perT) + "</td><td>₹" + Math.round(g.rsT) + "</td><td>" + Math.round(g.perT * ef) + "</td>" +
+        (hasHold ? "<td>" + (g.hold == null ? "–" : g.hold) + "</td>" : "") + (hasRem ? "<td>" + esc(g.remarks) + (g.flagged ? " ⚑" : "") + "</td>" : "") + "<td class=hash>" + g.hash + "</td></tr>").join("") + "</table>" +
+      (P.skipped.length ? "<p class=mut>Skipped: " + P.skipped.map(s => "line " + s.line + " (" + s.reason + ")").join("; ") + "</p>" : "");
+    $("flagBox").innerHTML = S.flagged.n ? '<div class="card" style="margin-top:12px"><h3>Flagged heats (remarks contain "hold" or "long") · observational</h3><div class="row">' + tile(S.flagged.n + " heats", "flagged") + tile(Math.round(S.flagged.kwh_t) + " kWh/t", "flagged average") +
+      (S.rest.n ? tile(Math.round(S.rest.kwh_t) + " kWh/t", "other " + S.rest.n + " heats") + tile((S.diff >= 0 ? "+" : "") + Math.round(S.diff) + " kWh/t", "flagged minus rest (" + (S.diff >= 0 ? "+" : "") + (100 * S.diff / S.rest.kwh_t).toFixed(1) + "%)") : tile("–", "no unflagged heats to compare")) +
+      '</div><p class="note">Observational only: this compares groups of heats as they happened, not a controlled test. Flagged heats may also differ in grade, size or start-up condition, and small samples are noisy.</p></div>'
+      : '<p class="mut">No remarks contain "hold" or "long", so no heats are flagged.</p>';
+    $("yNote").textContent = "Receipts from a heat log hash the totals you entered, not a 1-minute meter series, so they prove the log was not changed afterwards, not that it was right. Meter-grade receipts need the CT meter (see the meter series mode).";
+  }
   $("calc").onclick = calc; $("sample").onclick = () => { $("csv").value = SAMPLE; calc(); };
   $("file").onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => { $("csv").value = t; calc(); }); };
-  $("dl").onclick = () => { const csv = "heat,window,tonnes,kwh,kwh_per_t,rs_per_t,kgco2e_per_t,hold_min,prev_hash,hash\n" + lastRows.map(g => [g.heat, g.window, g.tonnes, g.kwh, g.perT.toFixed(1), Math.round(g.rsT), (g.perT * (+$("ef").value)).toFixed(1), g.hold == null ? "" : g.hold, g.prev, g.hash].join(",")).join("\n");
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "heatledger_receipts.csv"; a.click(); };
+  const q = v => /[",\n]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+  $("dl").onclick = () => { const ef = +$("ef").value, csv = "heat,grade,window,tonnes,kwh,kwh_per_t,rs_per_t,kgco2e_per_t,hold_min,remarks,flagged,prev_hash,hash\n" + lastRows.map(g => [q(g.heat), q(g.grade), abs(g.start) + "-" + abs(g.tap), g.tonnes, g.kwh, g.perT.toFixed(1), Math.round(g.rsT), (g.perT * ef).toFixed(1), g.hold == null ? "" : g.hold, q(g.remarks), g.flagged ? 1 : 0, g.prev, g.hash].join(",")).join("\n");
+    download("heatledger_receipts.csv", csv, "text/csv"); };
+
+  // --- mode 2: meter series ---
+  let SER = null, mtTouched = false;
+  $("np").oninput = () => { if (!mtTouched) $("mt").value = E.defaultMeltThreshold(+$("np").value); }; $("mt").oninput = () => { mtTouched = true; };
+  const warnBox = (id, a) => $(id).innerHTML = a.map(w => '<div class="warn">' + esc(w) + "</div>").join("");
+  function renderDet() {
+    const S = SER, L = S.log;
+    $("detTbl").innerHTML = "<table><tr><th>#</th><th>Window</th><th>Min</th><th>kWh detected</th><th>Melt kWh</th><th>Hold kW</th><th>Log heat</th><th>Tonnes</th></tr>" + S.desc.map((d, i) => "<tr><td>" + (i + 1) + "</td><td>" + abs(d.start) + "–" + abs(d.end) + "</td><td>" + (d.end - d.start) + "</td><td>" + f1(d.kwhDet) + "</td><td>" + f1(d.meltKwh) + "</td><td>" + (d.holdKw == null ? "–" : f1(d.holdKw)) +
+      "</td><td>" + (S.match[i] >= 0 && L ? esc(L[S.match[i]].heat) : "–") + '</td><td><input class="tn" type="number" step="0.01" min="0" data-i="' + i + '" value="' + (S.tonnes[i] > 0 ? +S.tonnes[i].toFixed(3) : "") + '"></td></tr>').join("") + "</table>";
+  }
+  function detect() {
+    const np = +$("np").value, ps = E.parseSeries($("scsv").value, { nameplate: np }), he = +$("he").value, mt = +$("mt").value;
+    $("detCard").style.display = "none"; $("recCard").style.display = "none"; SER = null;
+    const w = ps.warnings.slice(); if (ps.errors.length) { warnBox("sWarn", ps.errors.concat(w)); return; }
+    if (mt <= 1.2 * he) w.push("Melt threshold (" + mt + " kW) is close to the holding-power estimate (" + he + " kW): holding periods may be detected as melts. Lower the holding estimate or raise the threshold if you see false heats.");
+    const det = E.detectClean(ps.p, he, mt), desc = E.describeDetected(ps.p, det, mt, ps.t0);
+    w.push(ps.n + " readings (" + (ps.step === 1 ? "1-minute" : ps.step + "-minute") + ") spanning " + Math.round(ps.p.length / 60 * 10) / 10 + " h; " + desc.length + " heat(s) detected at melt threshold " + mt + " kW.");
+    warnBox("sWarn", w); if (!desc.length) return;
+    SER = { ps, desc, tonnes: desc.map(() => NaN), match: desc.map(() => -1), log: null, issued: null, mt };
+    $("detCard").style.display = "block"; $("matchNote").textContent = ""; renderDet();
+  }
+  $("detect").onclick = detect;
+  $("sfile").onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => { $("scsv").value = t; detect(); }); };
+  $("detTbl").oninput = ev => { const i = ev.target.dataset && ev.target.dataset.i; if (i != null && SER) SER.tonnes[+i] = parseFloat(ev.target.value); };
+  $("matchBtn").onclick = () => { if (!SER) return; const P = E.parseHeatLog($("csv").value);
+    if (!P.rows.length) { $("matchNote").textContent = "No valid heat log loaded. Paste one in the “Heat log CSV” mode first (or use the synthetic sample series, which also loads a synthetic log)."; return; }
+    const mi = E.matchLog(SER.desc, P.rows, +$("dayOff").value || 0); SER.log = P.rows; SER.match = mi;
+    mi.forEach((j, i) => { if (j >= 0) SER.tonnes[i] = P.rows[j].tonnes; });
+    $("matchNote").textContent = "Matched " + mi.filter(j => j >= 0).length + " of " + SER.desc.length + " detected heats to " + P.rows.length + " log rows by time overlap. Check the table; edit tonnes if a match is wrong."; renderDet(); };
+  let issuedCtx = null;
+  $("issue").onclick = () => { if (!SER) return; const ef = +$("ef2").value, idx = [];
+    SER.desc.forEach((d, i) => { if (SER.tonnes[i] > 0) idx.push(i); });
+    if (!idx.length) { $("matchNote").textContent = "Enter tonnes for at least one heat (or match to a heat log) first."; return; }
+    const heats = idx.map((i, n) => { const d = SER.desc[i]; return { id: hid(n + 1), start: d.start, end: d.end, s: d.s, e: d.e, tonnes: +SER.tonnes[i].toFixed(3) }; });
+    const R = E.seriesReceipts(SER.ps.p, heats, ef); SER.issued = { R, idx }; issuedCtx = { chain: R.chain, anchor: R.chain[R.chain.length - 1].hash };
+    $("recCard").style.display = "block"; $("expNote2").textContent = "";
+    $("sRec").innerHTML = "<table><tr><th>Heat</th><th>Window</th><th>t</th><th>kWh</th><th>kWh/t</th><th>kgCO₂e/t</th><th>Prev hash</th><th>Hash</th></tr>" + R.rows.map(r => "<tr><td>" + r.id + "</td><td>" + abs(r.start) + "–" + abs(r.end) + "</td><td>" + r.tonnes + "</td><td>" + r.kwh + "</td><td>" + r.kwh_per_t + "</td><td>" + r.kgco2e_per_t + "</td><td class=hash>" + r.prev_hash + "</td><td class=hash>" + r.hash + "</td></tr>").join("") + "</table>";
+    // side-by-side vs heat log
+    if (SER.log && idx.some(i => SER.match[i] >= 0)) { const C = E.compareLog(R.rows, SER.log, idx.map(i => SER.match[i]));
+      $("cmpBox").innerHTML = '<h2 style="margin-top:14px">Meter series vs heat log (kWh per heat)</h2><div class="row">' + tile(C.pairs.length, "heats compared") + tile(C.mad.toFixed(1) + "%", "mean absolute difference") + "</div>" +
+        '<div class="tw"><table><tr><th>Heat</th><th>Meter kWh</th><th>Log kWh</th><th>Difference</th></tr>' + C.pairs.map(p => "<tr><td>" + p.id + "</td><td>" + f1(p.meter) + "</td><td>" + f1(p.log) + "</td><td>" + (p.pct >= 0 ? "+" : "") + p.pct.toFixed(1) + "%</td></tr>").join("") + '</table></div><p class="note">Difference = (meter − log) / log. Positive means the meter series recorded more energy than the log. The meter window may include holding time the log does not.</p>';
+    } else $("cmpBox").innerHTML = SER.log ? '<p class="mut">A heat log is loaded but no detected heat in these receipts is matched to it. Use “Match to heat log by time” to compare.</p>' : '<p class="mut">Load a heat log (Heat log CSV mode) and match by time to see a side-by-side comparison.</p>';
+    // calibration
+    const cal = E.calibrate(idx.map(i => ({ tonnes: SER.tonnes[i], meltKwh: SER.desc[i].meltKwh, holdKw: SER.desc[i].holdKw }))), nh = idx.filter(i => SER.desc[i].holdKw != null).length, fin = v => v != null && isFinite(v);
+    $("calBox").innerHTML = (cal.n < 20 ? '<div class="warn">Only ' + cal.n + " heat(s) used; calibration needs 20 or more to be reliable. Treat these as rough.</div>" : "") +
+      '<div class="row">' + tile(fin(cal.hold_kw_est) ? f1(cal.hold_kw_est) + " kW" : "n/a", "estimated holding power (median over " + nh + " heats with a hold phase)") + tile(fin(cal.fixed_est) ? f1(cal.fixed_est) + " kWh" : "n/a", "fixed energy per heat (regression intercept)") +
+      tile(fin(cal.kwh_per_t_melt_est) ? f1(cal.kwh_per_t_melt_est) + " kWh/t" : "n/a", "melt energy (slope)") + tile(cal.n, "heats used") + "</div>" +
+      '<p class="note">Melt energy is regressed on tonnes, so it needs heats of different sizes' + (fin(cal.fixed_est) ? "" : " (not estimable here: fewer than 2 heats or identical tonnes)") + ". Feed these into the Break-even tab’s “Check your own furnace” to see whether scheduling pays.</p>"; };
+
+  // --- shared export / copy ---
+  function download(name, text, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); }
+  function copyText(t) { // execCommand first: synchronous inside the click, never waits on a permission prompt; Clipboard API (with a timeout) as backup
+    try { const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select(); const r = document.execCommand("copy"); ta.remove(); if (r) return Promise.resolve(true); } catch (e) { }
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) return Promise.resolve(false);
+    return Promise.race([navigator.clipboard.writeText(t).then(() => true, () => false), new Promise(r => setTimeout(() => r(false), 2000))]); }
+  function wireExport(bExp, bCopy, noteId, get) {
+    $(bExp).onclick = () => { const c = get(); if (!c) { $(noteId).textContent = "Nothing to export yet."; return; } download("heatledger_chain.json", E.exportChain(c.chain), "application/json"); $(noteId).textContent = "Exported " + c.chain.length + " heats. Anchor (head hash): " + c.anchor; };
+    $(bCopy).onclick = () => { const c = get(); if (!c) { $(noteId).textContent = "Nothing to copy yet."; return; } copyText(c.anchor).then(okk => { $(noteId).textContent = okk ? "Anchor copied: " + c.anchor : "Copy was blocked by the browser. Select the anchor here: " + c.anchor; }); };
+  }
+  wireExport("expChain", "copyAnchor", "expNote", () => chain ? { chain, anchor } : null);
+  wireExport("expChain2", "copyAnchor2", "expNote2", () => issuedCtx);
+
+  // --- synthetic sample series (reference model; not real) ---
+  function syntheticSample() {
+    const cfg = BASE, hh = i => clock(i);
+    for (let seed = 21; seed < 60; seed++) {
+      const rng = E.makeRng(seed), pieces = [], log = []; let day = 0;
+      for (let k = 0; k < 4; k++) { const { q, d, noise } = E.makeDay(rng), ev = E.evaluate(E.planDP(q, d, cfg), q, d, noise, cfg), p = E.powerSeries(ev.recs, cfg, rng);
+        pieces.push(p); ev.recs.forEach((r, n) => log.push({ day: k, s: Math.round(r.start), t: Math.round(Math.max(r.ready, r.last_due)), kg: Math.round(r.tonnes * 1000), kwh: Math.round(r.kwh), hold: r.hold_min > 20 })); }
+      const text = "heat,grade,weight_kg,start,tap,kwh,remarks\n" + log.map((r, n) => [n + 1, "SYN", r.kg, hh(r.s), hh(r.t), r.kwh, r.hold ? "long hold" : ""].join(",")).join("\n");
+      const P = E.parseHeatLog(text); if (P.rows.length !== log.length || !P.rows.every((r, n) => r.start === log[n].day * 1440 + log[n].s)) continue; // day roll-over must be recoverable from clock times
+      const lines = ["timestamp,kw"]; pieces.forEach(p => { for (let i = 0; i < p.length; i++) lines.push(hh(i) + "," + p[i].toFixed(1)); });
+      return { series: lines.join("\n"), log: text, seed };
+    }
+    return null;
+  }
+  $("sSample").onclick = () => { const S = syntheticSample(); if (!S) { warnBox("sWarn", ["Could not generate a sample."]); return; }
+    $("scsv").value = S.series; $("csv").value = S.log; $("np").value = 1500; $("mt").value = 200; mtTouched = true; $("he").value = 100; calc(); detect();
+    $("sWarn").insertAdjacentHTML("afterbegin", '<div class="warn"><b>SYNTHETIC sample.</b> Four simulated days generated in your browser by the reference model (engine.powerSeries) with nameplate 1500 kW and melt threshold 200 kW; a synthetic heat log was also loaded into the Heat log mode so you can try matching. No real foundry data.</div>'); };
 })();

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HeatLedger Verify</title>
+<link rel="stylesheet" href="style.css"></head><body>
+<header><h1>HeatLedger Verify</h1><p>Buyer-side check of a receipt chain · runs entirely in your browser, nothing is uploaded · <a href="index.html">← Back to Studio</a></p></header>
+<main style="padding-top:16px">
+<div class="card"><h2>1. Paste the receipt chain</h2>
+ <p class="mut">A JSON array of <span class="hash">{"payload": "...", "hash": "..."}</span>, one entry per heat, oldest first. The foundry produces it with <b>Export chain JSON</b> on the Studio's Receipts tab.</p>
+ <textarea id="chainIn" rows="8" placeholder='[{"payload":"{\"id\":\"H01\",...}","hash":"..."}]' spellcheck="false"></textarea>
+ <p><input type="file" id="file" accept=".json,application/json"></p>
+ <h2 style="margin-top:12px">2. Paste the anchored head hash</h2>
+ <p class="mut">The head (last) hash as it was posted outside the foundry at the end of the shift, from your own record, not from the foundry's copy of the chain.</p>
+ <input id="anchorIn" class="hash" placeholder="64 hex characters" spellcheck="false" autocomplete="off">
+ <p style="margin-top:12px"><button class="act" id="vBtn">Verify</button> <button class="act alt" id="exOk">Load synthetic example</button> <button class="act alt" id="exBad">Load tampered synthetic example</button></p>
+</div>
+<div class="card" id="out" style="display:none"><h2>Result</h2><div class="verdict" id="verdict"></div><p class="mut" id="headLine"></p><div class="tw" id="tbl"></div>
+ <p class="note">OK means: every heat's hash matches its content, every heat links to the one before, and the last hash equals the anchor you supplied. It proves the record was not changed after the anchor was posted. It does not prove the meter was correct or that the readings were honest at the time.</p></div>
+</main>
+<script src="engine.js"></script>
+<script>
+(function () {
+  "use strict"; const E = window.HeatLedgerEngine, $ = id => document.getElementById(id);
+  const clock = m => { m = Math.round(m); return String(Math.floor(m / 60) % 24).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function show(err) { $("out").style.display = "block"; $("verdict").innerHTML = '<span class="bad">' + esc(err) + "</span>"; $("headLine").textContent = ""; $("tbl").innerHTML = ""; }
+  function verify() {
+    const anchor = $("anchorIn").value.trim().toLowerCase(), p = E.parseChainJson($("chainIn").value);
+    if (p.error) return show(p.error);
+    if (!/^[0-9a-f]{64}$/.test(anchor)) return show("Enter the anchored head hash: 64 hexadecimal characters.");
+    const r = E.verifyChainDetail(p.chain, anchor);
+    $("out").style.display = "block";
+    $("verdict").innerHTML = r.ok ? '<span class="ok">OVERALL: OK</span> · ' + r.heats.length + " heats verified" : '<span class="bad">OVERALL: ' + esc(r.verdict) + "</span>";
+    $("headLine").innerHTML = "Head hash in chain: <span class=hash>" + esc(r.head) + "</span> " + (r.anchorMatches ? '<span class="pill ok">matches anchor</span>' : '<span class="pill bad">differs from anchor</span>');
+    $("tbl").innerHTML = "<table><tr><th>#</th><th>Heat</th><th>Window</th><th>t</th><th>kWh (from readings)</th><th>Hash</th><th>Result</th></tr>" + r.heats.map(h =>
+      "<tr><td>" + h.n + "</td><td>" + esc(h.id) + "</td><td>" + (typeof h.start === "number" && typeof h.end === "number" ? clock(h.start) + "–" + clock(h.end) : "–") + "</td><td>" + (h.tonnes == null ? "–" : esc(h.tonnes)) +
+      "</td><td>" + (h.kwh == null ? "–" : h.kwh.toFixed(1)) + "</td><td class=hash>" + esc(String(h.hash).slice(0, 12)) + "</td><td>" +
+      (h.ok ? '<span class="pill ok">OK</span>' : '<span class="pill bad">FAIL</span> <span class="mut">' + esc(h.reason) + "</span>") + "</td></tr>").join("") + "</table>";
+  }
+  function example(tamper) { // SYNTHETIC readings, generated here
+    const hs = [0, 1, 2, 3].map(i => ({ id: "H0" + (i + 1), start: 360 + i * 120, end: 360 + i * 120 + 60, tonnes: 1.2 + i / 10, kw: Array.from({ length: 60 }, (_, j) => +(1500 + 40 * Math.sin(j / 5 + i)).toFixed(1)) }));
+    const ch = E.buildChain(hs), anchor = ch[3].hash;
+    if (tamper) { const d = JSON.parse(ch[1].payload); d.kw = d.kw.map(x => Math.round(x * 0.9 * 10) / 10); ch[1] = { payload: JSON.stringify(d), hash: ch[1].hash }; }
+    $("chainIn").value = E.exportChain(ch); $("anchorIn").value = anchor; verify();
+  }
+  $("vBtn").onclick = verify; $("exOk").onclick = () => example(false); $("exBad").onclick = () => example(true);
+  $("file").onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => { $("chainIn").value = t; }); };
+})();
+</script></body></html>

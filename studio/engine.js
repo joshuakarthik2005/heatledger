@@ -227,8 +227,8 @@
   function verifyChain(chain, anchor) {
     let prev = ZERO;
     for (let n = 0; n < chain.length; n++) {
-      const d = JSON.parse(chain[n].payload);
-      if (d.prev !== prev) return "FAIL: chain broken at heat " + (n + 1);
+      let d; try { d = JSON.parse(chain[n].payload); } catch (e) { return "FAIL: heat " + (n + 1) + " payload is not valid JSON"; }
+      if (!d || d.prev !== prev) return "FAIL: chain broken at heat " + (n + 1);
       if (sha256(chain[n].payload) !== chain[n].hash) return "FAIL: heat " + (n + 1) + " payload altered";
       prev = chain[n].hash;
     }
@@ -249,14 +249,147 @@
       rs_per_t: cost == null ? null : Math.round(cost / h.tonnes), hash: hash.slice(0, 12), prev_hash: prevHash.slice(0, 12), full: hash };
   }
 
-  // ---- CSV helpers for "Your data" ----
-  function parseClock(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s).trim()); return m ? (+m[1]) * 60 + (+m[2]) : NaN; }
-  function parseCsv(text) {
-    const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim()); if (!lines.length) return [];
-    const head = lines[0].split(",").map(s => s.trim().toLowerCase());
-    return lines.slice(1).map(l => { const c = l.split(","), o = {}; head.forEach((k, i) => o[k] = (c[i] || "").trim()); return o; });
+  // ---- chain export / verify helpers (format: JSON array of {payload, hash}) ----
+  function exportChain(chain) { return JSON.stringify(chain.map(c => ({ payload: c.payload, hash: c.hash })), null, 2); }
+  function parseChainJson(text) {
+    if (!String(text).trim()) return { error: "Paste the receipt chain JSON first." };
+    let a; try { a = JSON.parse(text); } catch (e) { return { error: "Not valid JSON: " + e.message }; }
+    if (!Array.isArray(a) || !a.length) return { error: "Expected a non-empty JSON array of {payload, hash}." };
+    for (let i = 0; i < a.length; i++)
+      if (!a[i] || typeof a[i].payload !== "string" || typeof a[i].hash !== "string") return { error: "Item " + (i + 1) + " must be an object with string fields payload and hash." };
+    return { chain: a.map(c => ({ payload: c.payload, hash: c.hash })) };
+  }
+  // Per-heat result plus the overall verdict from verifyChain (the verdict is authoritative).
+  function verifyChainDetail(chain, anchor) {
+    anchor = String(anchor || "").trim().toLowerCase();
+    let prev = ZERO; const heats = [];
+    chain.forEach((c, n) => {
+      const reasons = []; let d = null;
+      try { d = JSON.parse(c.payload); } catch (e) { reasons.push("payload is not valid JSON"); }
+      if (d && d.prev !== prev) reasons.push("link to previous heat is broken");
+      if (sha256(c.payload) !== String(c.hash).toLowerCase()) reasons.push("payload does not match its hash");
+      let kwh = null; if (d && Array.isArray(d.kw)) kwh = d.kw.reduce((a, b) => a + b, 0) / 60.0;
+      heats.push({ n: n + 1, id: d && d.id != null ? String(d.id) : "?", start: d && d.start, end: d && d.end, tonnes: d && d.tonnes, kwh,
+        ok: !reasons.length, reason: reasons.join("; "), hash: c.hash }); prev = String(c.hash).toLowerCase();
+    });
+    const lc = chain.map(c => ({ payload: c.payload, hash: String(c.hash).toLowerCase() }));
+    const verdict = verifyChain(lc, anchor), head = lc.length ? lc[lc.length - 1].hash : "";
+    return { verdict, ok: verdict === "OK", heats, head, anchorMatches: head === anchor };
+  }
+
+  // ---- CSV helpers ----
+  function parseClock(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s).trim()); if (!m || +m[1] > 23 || +m[2] > 59) return NaN; return (+m[1]) * 60 + (+m[2]); }
+  function splitCsvLine(line) { // handles "quoted, fields" and "" escapes; no multi-line fields
+    const out = []; let cur = "", q = false;
+    for (let i = 0; i < line.length; i++) { const c = line[i];
+      if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; }
+    out.push(cur); return out.map(s => s.trim());
+  }
+  function readCsv(text) {
+    const lines = String(text).replace(/^﻿/, "").replace(/\r/g, "").split("\n").filter(l => l.trim());
+    if (!lines.length) return { head: [], rows: [] };
+    const head = splitCsvLine(lines[0]).map(s => s.toLowerCase());
+    return { head, rows: lines.slice(1).map(l => { const c = splitCsvLine(l), o = {}; head.forEach((k, i) => o[k] = (c[i] || "").trim()); return o; }) };
+  }
+  function parseCsv(text) { return readCsv(text).rows; }
+  const num = s => (s === undefined || s === "" ? NaN : Number(s));
+
+  // ---- heat log: heat, grade, weight_kg (or tonnes), start, tap, kwh, remarks. Times HH:MM, absolute minutes across midnights ----
+  function parseHeatLog(text) {
+    const { head, rows } = readCsv(text), out = [], skipped = [], errors = [], warnings = [];
+    if (!head.length) return { rows: [], skipped, errors: ["Empty input."], warnings };
+    ["start", "tap", "kwh"].forEach(k => { if (head.indexOf(k) < 0) errors.push('Missing column "' + k + '".'); });
+    if (head.indexOf("weight_kg") < 0 && head.indexOf("tonnes") < 0) errors.push('Missing column "weight_kg" (or "tonnes").');
+    if (errors.length) return { rows: [], skipped, errors, warnings };
+    let day = 0, prevStart = null, crossings = 0;
+    rows.forEach((r, n) => {
+      const line = n + 2, s = parseClock(r.start), t = parseClock(r.tap), kwh = num(r.kwh), wkg = num(r.weight_kg);
+      const tonnes = wkg > 0 ? wkg / 1000 : num(r.tonnes);
+      const why = isNaN(s) ? "bad start time" : isNaN(t) ? "bad tap time" : !(tonnes > 0) ? "missing or non-positive weight" : !(kwh > 0) ? "missing or non-positive kwh" : null;
+      if (why) { skipped.push({ line, reason: why }); return; }
+      let start = day * 1440 + s;
+      while (prevStart !== null && start < prevStart) { day++; start += 1440; crossings++; }
+      const tap = start - s + t + (t < s ? 1440 : 0), remarks = r.remarks || "";
+      out.push({ line, heat: r.heat || String(out.length + 1), grade: r.grade || "", tonnes, kwh, perT: kwh / tonnes, start, tap, remarks,
+        flagged: /hold|long/i.test(remarks), hold: r.hold_min ? +r.hold_min : null });
+      prevStart = start;
+    });
+    if (crossings || out.some(o => o.tap >= 1440)) warnings.push("Run crosses midnight: times were read as a continuous multi-day run.");
+    return { rows: out, skipped, errors, warnings };
+  }
+  function logStats(rows, ef) {
+    const agg = a => { const t = a.reduce((x, r) => x + r.tonnes, 0), k = a.reduce((x, r) => x + r.kwh, 0); return { n: a.length, tonnes: t, kwh: k, kwh_t: t ? k / t : NaN, kg_t: t ? k / t * ef : NaN }; };
+    const fl = rows.filter(r => r.flagged), rest = rows.filter(r => !r.flagged), all = agg(rows), pt = rows.map(r => r.perT);
+    return { all, min: Math.min.apply(null, pt), max: Math.max.apply(null, pt), flagged: agg(fl), rest: agg(rest),
+      diff: fl.length && rest.length ? agg(fl).kwh_t - agg(rest).kwh_t : null };
+  }
+
+  // ---- 1-minute (or 5-minute) meter series: timestamp (ISO or HH:MM), kw. No clipping of kW values. ----
+  function parseTimestamp(s) { // -> {abs minutes (UTC-style, deterministic) | clock-only minutes}
+    s = String(s).trim(); let m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+    if (m) { if (+m[4] > 23 || +m[5] > 59) return null; return { iso: true, t: Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 60000 }; }
+    m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s); if (!m || +m[1] > 23 || +m[2] > 59) return null;
+    return { iso: false, t: (+m[1]) * 60 + (+m[2]) + (+(m[3] || 0)) / 60 };
+  }
+  function parseSeries(text, opts) {
+    opts = opts || {}; const { head, rows } = readCsv(text), warnings = [], res = { p: new Float64Array(0), t0: 0, step: NaN, n: 0, skipped: 0, missing: 0, max: 0, warnings, errors: [] };
+    if (head.indexOf("timestamp") < 0 || head.indexOf("kw") < 0) { res.errors.push('Need columns "timestamp,kw".'); return res; }
+    const pts = []; let day = 0, prevClock = null, prevT = null, skipped = 0;
+    rows.forEach(r => {
+      const ts = parseTimestamp(r.timestamp), kw = num(r.kw);
+      if (!ts || !(kw >= 0) || !isFinite(kw)) { skipped++; return; }
+      let t = ts.t;
+      if (!ts.iso) { if (prevClock !== null && t < prevClock) day++; prevClock = t; t += day * 1440; }
+      if (prevT !== null && t <= prevT) { skipped++; return; } prevT = t; pts.push([t, kw]);
+    });
+    res.skipped = skipped; if (skipped) warnings.push(skipped + " row(s) skipped (bad timestamp, negative or non-numeric kW, or not increasing).");
+    if (pts.length < 10) { res.errors.push("Fewer than 10 usable rows."); return res; }
+    const diffs = []; for (let i = 1; i < pts.length; i++) diffs.push(pts[i][0] - pts[i - 1][0]);
+    const step = median(diffs); res.step = step;
+    if (step < 0.99) { res.errors.push("Samples are closer than 1 minute; resample to 1-minute data first."); return res; }
+    if (step > 5.01) { res.errors.push("Sampling interval is about " + step.toFixed(1) + " min; need 1-minute data (5-minute is accepted with reduced accuracy)."); return res; }
+    if (step > 1.01) warnings.push("Sampling interval is " + step.toFixed(0) + " minutes. Each reading is held for the interval; heat edges, energy and holding-power estimates are less accurate than with 1-minute data.");
+    const t0 = Math.round(pts[0][0]), len = Math.round(pts[pts.length - 1][0]) - t0 + Math.max(1, Math.round(step));
+    const p = new Float64Array(len), seen = new Uint8Array(len); let max = 0;
+    pts.forEach((pt, i) => { const m = Math.round(pt[0]) - t0, nx = i + 1 < pts.length ? Math.round(pts[i + 1][0]) - t0 : m + Math.round(step), hold = Math.max(1, Math.min(nx - m, Math.round(step)));
+      for (let k = 0; k < hold && m + k < len; k++) { p[m + k] = pt[1]; seen[m + k] = 1; } if (pt[1] > max) max = pt[1]; });
+    let missing = 0; for (let i = 0; i < len; i++) if (!seen[i]) missing++;
+    if (missing) warnings.push(missing + " minute(s) have no reading; they are treated as 0 kW.");
+    if (opts.nameplate && max > 1.5 * opts.nameplate) warnings.push("Peak " + max.toFixed(0) + " kW is above the furnace nameplate; check units (kW, not W). Values are not clipped.");
+    res.p = p; res.t0 = ((t0 % 1440) + 1440) % 1440; res.n = pts.length; res.missing = missing; res.max = max; return res;
+  }
+  const defaultMeltThreshold = nameplateKw => (nameplateKw < 1000 ? 100 : 200);
+  // Describe detectClean output: absolute minutes (t0 = clock of sample 0), melt window, melt kWh, holding kW.
+  function describeDetected(p, det, meltThr, t0) {
+    return det.map(([s, e, kwh], k) => {
+      let f = -1, l = -1; for (let i = s; i < e; i++) if (p[i] > meltThr) { if (f < 0) f = i; l = i; }
+      let meltKwh = 0; if (f >= 0) for (let i = f; i <= l; i++) meltKwh += p[i]; meltKwh /= 60.0;
+      const hp = f >= 0 && e - (l + 1) >= 5 ? Array.prototype.slice.call(p, l + 1, e) : [];
+      return { idx: k, s, e, start: t0 + s, end: t0 + e, kwhDet: kwh, meltKwh, holdKw: hp.length ? median(hp) : null };
+    });
+  }
+  // Greedy by time: each detected heat takes the log row with the largest time overlap; each log row used once.
+  function matchLog(desc, logRows, dayOffset) {
+    const off = (dayOffset || 0) * 1440, used = new Set();
+    return desc.map(d => { let best = -1, bo = 0;
+      logRows.forEach((r, i) => { if (used.has(i)) return; const ov = Math.min(d.end, r.tap + off) - Math.max(d.start, r.start + off); if (ov > bo) { bo = ov; best = i; } });
+      if (best >= 0) used.add(best); return best; });
+  }
+  function seriesReceipts(p, heats, ef) { // heats: [{id,start,end,s,e,tonnes}] -> {chain, rows}
+    const hs = heats.map(h => ({ id: h.id, start: h.start, end: h.end, tonnes: h.tonnes, kw: Array.from(p.slice(h.s, h.e), v => +v.toFixed(1)) }));
+    const chain = buildChain(hs); let prev = ZERO;
+    const rows = hs.map((h, n) => { const r = receiptFromReadings(h, prev, { ef }, null); prev = chain[n].hash; return Object.assign({ id: h.id, start: h.start, end: h.end, tonnes: h.tonnes }, r); });
+    return { chain, rows };
+  }
+  function compareLog(rows, logRows, matchIdx) { // meter kWh vs log kWh per heat
+    const pairs = []; rows.forEach((r, i) => { const j = matchIdx[i]; if (j == null || j < 0) return; const L = logRows[j];
+      pairs.push({ id: r.id, meter: r.kwh, log: L.kwh, pct: 100 * (r.kwh - L.kwh) / L.kwh }); });
+    return { pairs, mad: pairs.length ? pairs.reduce((a, x) => a + Math.abs(x.pct), 0) / pairs.length : NaN };
   }
 
   return { BASE, pyround, pyFloat, multMinute, avgm, meltMin, makeRng, makeDay, baselinePlan, planDP, evaluate, study, summarize,
-    powerSeries, detectClean, matchHeats, calibrate, sha256, buildChain, verifyChain, rechainFrom, payload, receiptFromReadings, parseClock, parseCsv, ZERO };
+    powerSeries, detectClean, matchHeats, calibrate, sha256, buildChain, verifyChain, rechainFrom, payload, receiptFromReadings, parseClock, parseCsv, ZERO,
+    exportChain, parseChainJson, verifyChainDetail, splitCsvLine, readCsv, parseHeatLog, logStats, parseTimestamp, parseSeries, defaultMeltThreshold,
+    describeDetected, matchLog, seriesReceipts, compareLog, median };
 });
