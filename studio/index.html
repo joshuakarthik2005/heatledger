@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HeatLedger Studio</title>
+<style>
+:root{--bg:#14211c;--card:#1d2e27;--edge:#2f443a;--ink:#f1efe8;--mut:#a9b8b0;--org:#f08a4b;--grn:#5fd3a6;--red:#ff7a6b;--btn:#0b6e4f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{padding:18px 24px 6px}h1{margin:0;font-size:24px}header p{margin:4px 0 0;color:var(--org);font-size:13px}
+nav{display:flex;gap:6px;padding:10px 24px;flex-wrap:wrap;border-bottom:1px solid var(--edge)}
+nav button{background:var(--card);color:var(--mut);border:1px solid var(--edge);padding:8px 16px;border-radius:999px;cursor:pointer;font:inherit}
+nav button.on{background:var(--btn);color:#fff;border-color:var(--btn)}
+main{padding:16px 24px 40px;max-width:1180px;margin:auto}section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:16px;margin:0 0 14px}
+.row{display:flex;gap:14px;flex-wrap:wrap}.row>*{flex:1 1 260px}
+h2{margin:0 0 8px;font-size:17px}h3{margin:0 0 6px;font-size:14px;color:var(--mut);font-weight:500}
+.tile{background:var(--bg);border:1px solid var(--edge);border-radius:12px;padding:12px}.tile b{display:block;font-size:24px;color:var(--grn);font-family:ui-monospace,Menlo,monospace}
+.tile span{color:var(--mut);font-size:13px}
+button.act{background:var(--btn);color:#fff;border:0;padding:9px 16px;border-radius:10px;cursor:pointer;font:inherit}
+button.act.alt{background:#3a2f24;color:var(--org);border:1px solid var(--org)}button.act:disabled{opacity:.5}
+label{display:block;font-size:13px;color:var(--mut);margin:6px 0 2px}input,textarea,select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:7px;font:inherit}
+input[type=range]{padding:0}table{width:100%;border-collapse:collapse;font-size:13px;font-family:ui-monospace,Menlo,monospace}
+th,td{padding:6px 8px;border-bottom:1px solid var(--edge);text-align:right;white-space:nowrap}th{color:var(--mut);font-weight:500}th:first-child,td:first-child{text-align:left}
+.tw{overflow-x:auto}.ok{color:var(--grn)}.bad{color:var(--red)}.mut{color:var(--mut);font-size:13px}.note{color:var(--mut);font-size:12.5px;margin-top:8px}
+canvas,svg{width:100%;height:auto;display:block}.hash{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+.cell{padding:10px;text-align:center;border-radius:8px;font-family:ui-monospace,Menlo,monospace}
+.banner{background:#3a2f24;border:1px solid var(--org);color:var(--org);border-radius:10px;padding:8px 12px;font-size:13px;margin:10px 24px 0}
+</style></head><body>
+<header><h1>HeatLedger Studio</h1><p>Prototype · reference model with SYNTHETIC data · everything runs in your browser, nothing is uploaded</p></header>
+<div class="banner">Numbers on the first three tabs come from a simulated foundry (assumptions in the Break-even tab). Only the “Your data” tab uses numbers you supply.</div>
+<nav id="tabs"><button data-t="t1" class="on">1 · Receipts</button><button data-t="t2">2 · Planner</button><button data-t="t3">3 · Break-even</button><button data-t="t4">4 · Your data</button></nav>
+<main>
+<section id="t1" class="on">
+ <div class="row"><div class="card"><h2>Live heat view (replay of heat H01)</h2><canvas id="live" width="760" height="330"></canvas>
+  <div style="margin-top:8px"><button class="act" id="replay">Replay</button></div></div>
+  <div class="card"><h2>Receipt for H01</h2><div id="h01"></div><p class="note">Hash covers heat id, start, end, tonnes, every 1-minute reading and the previous hash (SHA-256, computed here in your browser).</p></div></div>
+ <div class="card"><h2>A simulated day, detected from the meter series</h2>
+  <div class="row" style="align-items:end"><div><label>Day seed</label><input id="seed1" type="number" value="3"></div><div><button class="act" id="gen">Generate day &amp; receipts</button></div></div>
+  <div class="tw" id="rec"></div><p class="mut" id="anchorLine"></p></div>
+ <div class="card"><h2>Tamper test</h2><p class="mut">The head hash is posted to a third party each shift (the anchor). Try to cheat:</p>
+  <button class="act alt" id="tEdit">Edit heat 3 by −10%</button> <button class="act alt" id="tRe">Edit heat 3 and recompute every later hash</button> <button class="act" id="tReset">Reset</button>
+  <p id="tOut" style="margin-top:10px"></p></div>
+</section>
+<section id="t2">
+ <div class="card"><h2>Melt planner: operator habit vs exact plan</h2>
+ <div class="row"><div><label>Day seed</label><input id="seed2" type="number" value="4"></div>
+  <div><label>Energy ↔ on-time dial: late penalty ₹/min: <b id="lpv">500</b></label><input id="lp" type="range" min="0" max="100" value="100"></div>
+  <div><label>Holding power kW: <b id="hkv">100</b></label><input id="hk" type="range" min="30" max="200" value="100"></div>
+  <div><label>Fixed overhead kWh/heat: <b id="fxv">60</b></label><input id="fx" type="range" min="0" max="120" value="60"></div></div>
+ <div id="gantt"></div><div class="row" id="dayTiles"></div></div>
+ <div class="card"><h2>90-day study (78 working days)</h2><button class="act" id="runStudy">Run study</button> <span class="mut" id="studyNote"></span><div class="row" id="studyTiles" style="margin-top:10px"></div></div>
+</section>
+<section id="t3">
+ <div class="card"><h2>Does scheduling pay at your furnace? Break-even grid</h2>
+ <p class="mut">kWh/t saved by the planner (45-day study, seed 1) for different true values of holding power and per-heat overhead. Negative means scheduling does not pay; use receipt-only mode.</p>
+ <button class="act" id="runGrid">Compute grid</button> <span class="mut" id="gridNote"></span><div id="grid" style="margin-top:10px"></div></div>
+ <div class="card"><h2>Check your own furnace</h2><div class="row"><div><label>Holding power kW (from calibration)</label><input id="ch" type="number" value="80"></div><div><label>Fixed overhead kWh/heat</label><input id="cf" type="number" value="75"></div><div style="align-self:end"><button class="act" id="chk">Check</button></div></div><p id="chkOut" style="margin-top:10px"></p></div>
+ <div class="card"><h2>Model assumptions</h2><div class="tw"><table id="assump"></table></div></div>
+</section>
+<section id="t4">
+ <div class="card"><h2>Your heat log</h2><p class="mut">CSV columns: <span class="hash">heat,start,tap,tonnes,kwh</span> (clock times HH:MM; optional <span class="hash">hold_min</span>). Parsed in your browser only.</p>
+ <input type="file" id="file" accept=".csv,text/csv"> <p></p><textarea id="csv" rows="7" placeholder="heat,start,tap,tonnes,kwh&#10;1,06:00,07:30,0.48,310"></textarea>
+ <div class="row" style="align-items:end"><div><label>Emission factor tCO₂/MWh</label><input id="ef" type="number" step="0.001" value="0.710"></div><div><label>Base tariff ₹/kWh</label><input id="tar" type="number" step="0.1" value="7"></div>
+ <div><button class="act" id="calc">Compute receipts</button> <button class="act alt" id="sample">Load synthetic sample</button></div></div></div>
+ <div class="card" id="outCard" style="display:none"><h2>Results</h2><div class="row" id="sumTiles"></div><div class="tw" id="tbl"></div>
+  <p style="margin-top:10px"><button class="act" id="dl">Download receipts CSV</button></p><p class="note" id="yNote"></p></div>
+</section>
+</main>
+<script src="engine.js"></script><script src="app.js"></script></body></html>
