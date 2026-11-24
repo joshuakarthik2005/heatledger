@@ -61,7 +61,7 @@ ok(/anchor/.test(E.verifyChain(rc, anchor)), "rechain fails vs anchor");
   ok(st.flagged.n === 2 && st.rest.n === 2 && Math.abs(st.flagged.kwh_t - (780 + 640) / 2.2) < 1e-9 && Math.abs(st.diff - (st.flagged.kwh_t - st.rest.kwh_t)) < 1e-12, "flag stats");
   const r2 = E.parseHeatLog("heat,start,tap,tonnes,kwh,hold_min\n1,06:00,07:35,1.10,640,12\n2,08:00,09:30,1.25,722,5");
   ok(r2.rows.length === 2 && r2.rows[0].tonnes === 1.1 && r2.rows[0].tap === 455 && r2.rows[0].hold === 12 && !r2.warnings.length, "old tonnes format still parses");
-  ok(E.parseHeatLog("heat,start,tap,kwh\n1,06:00,07:00,5").errors.length === 1, "missing weight column reported");
+  { const m = E.parseHeatLog("heat,start,tap,kwh\n1,06:00,07:00,5"); ok(m.needsMapping && m.unmapped.join() === "weight" && !m.rows.length && !m.errors.length, "missing weight column -> mapping fallback"); }
   ok(isNaN(E.parseClock("24:00")) && isNaN(E.parseClock("12:60")) && E.parseClock("7:05") === 425, "clock validation");
   const r3 = E.parseHeatLog("heat,start,tap,tonnes,kwh\n1,20:00,21:00,1,600\n2,23:00,23:50,1,600\n3,02:00,03:00,1,600\n4,01:00,02:00,1,600\n5,06:00,07:00,1,600");
   ok(r3.rows.map(x => x.start).join() === [1200, 1380, 1560, 2940, 3240].join(), "multi-day run: " + r3.rows.map(x => x.start));
@@ -98,6 +98,43 @@ ok(/anchor/.test(E.verifyChain(rc, anchor)), "rechain fails vs anchor");
   ok(!pi.errors.length && pi.p.length === 10 && pi.skipped === 1 && pi.t0 === 1438, "ISO timestamps incl. date rollover: " + JSON.stringify(pi.errors) + pi.p.length + " " + pi.t0);
   ok(E.parseSeries("timestamp,kw\n" + Array.from({ length: 12 }, (_, i) => "2025-01-01T" + String(i).padStart(2, "0") + ":00,5").join("\n")).errors.length === 1, "hourly data rejected");
   ok(E.defaultMeltThreshold(550) === 100 && E.defaultMeltThreshold(1000) === 200 && E.defaultMeltThreshold(1500) === 200, "melt threshold default by nameplate");
+}
+// ---- header aliases, delimiters, meter before/after, mapping fallback, report (invented rows only) ----
+{
+  const h1 = E.parseHeatLog("Heat No.,Grade,Wt (kg),Start Time,Tap,kWh (meter),Remarks\n1,A,500,06:00,07:30,310,\n2,A,520,08:00,09:30,330,long wait\n");
+  ok(!h1.needsMapping && h1.rows.length === 2 && !h1.errors.length, "aliases map: " + JSON.stringify(h1.unmapped));
+  ok(h1.rows[0].tonnes === 0.5 && h1.rows[0].kwh === 310 && h1.rows[0].heat === "1" && h1.rows[0].grade === "A" && h1.rows[1].flagged && h1.rows[1].tap === 570, "alias values read");
+  ok(h1.mapping.weight === "Wt (kg)" && h1.mapping.kwh === "kWh (meter)" && h1.mapping.heat === "Heat No." && h1.mapping.remarks === "Remarks" && h1.mapping.tap === "Tap", "mapping reports raw headers");
+  const keys = { "Weight (kg)": "weight", "WT": "weight", "Charge kg": "weight", "Metal (kg)": "weight", "No": "heat", "Heat Number": "heat", "Charging Time": "start", "Tapping": "tap", "Tap Time": "tap", "Energy": "kwh", "Meter kWh": "kwh", "Notes": "remarks", "Remark": "remarks" };
+  Object.keys(keys).forEach(k => { const am = E.autoMap([k]), f = keys[k]; ok(am[f] && am[f].idx === 0, "alias " + k + " -> " + f); });
+  ok(E.autoMap(["Weight (t)"]).weight.unit === "t" && E.autoMap(["Tonnes"]).weight.unit === "t" && E.autoMap(["Wt (kg)"]).weight.unit === "kg" && E.autoMap(["Weight"]).weight.unit === null, "weight units from header");
+  const ht = E.parseHeatLog("heat,start,tap,Weight (t),kwh\n1,06:00,07:00,0.5,300");
+  ok(ht.rows[0].tonnes === 0.5 && !ht.warnings.some(w => /no unit/.test(w)), "tonnes header respected");
+  const hk = E.parseHeatLog("heat,start,tap,weight,kwh\n1,06:00,07:00,500,300"); ok(hk.rows[0].tonnes === 0.5 && hk.warnings.some(w => /kilograms/.test(w)), "unitless weight assumed kg with warning");
+  // tab-separated (pasted spreadsheet cells) incl. thousands separator and am/pm; semicolon with decimal comma
+  const tsv = E.parseHeatLog("Heat No.\tWt (kg)\tStart\tTap\tkWh (meter)\tRemarks\n1\t1,100\t6:00 AM\t7:30:00\t640\t\n2\t1,200\t08:00\t09:30\t720\tHold");
+  ok(tsv.delimiter === "\t" && tsv.rows.length === 2 && tsv.rows[0].tonnes === 1.1 && tsv.rows[0].start === 360 && tsv.rows[1].flagged, "tab-separated paste");
+  const sc = E.parseHeatLog("heat;weight_kg;start;tap;kwh\n1;480,5;06:00;07:30;310,5\n");
+  ok(sc.delimiter === ";" && sc.rows.length === 1 && Math.abs(sc.rows[0].tonnes - 0.4805) < 1e-9 && sc.rows[0].kwh === 310.5, "semicolon with decimal comma");
+  // meter before/after
+  const mb = E.parseHeatLog("heat,wt,start,tap,meter_before,meter_after,kwh\n1,500,06:00,07:00,1000,1310,\n2,500,08:00,09:00,1310,1630,325\n3,500,10:00,11:00,5000,4900,\n");
+  ok(!mb.needsMapping && mb.rows.length === 2 && mb.rows[0].kwh === 310 && mb.rows[0].fromMeters && mb.rows[1].kwh === 325 && !mb.rows[1].fromMeters, "kWh from meters only when kwh missing");
+  ok(mb.skipped.length === 1 && mb.skipped[0].reason === "negative kWh from meters" && mb.warnings.some(w => /lower than meter_before/.test(w)), "negative meter difference warned and skipped");
+  const mb2 = E.parseHeatLog("heat,wt,start,tap,meter_before,meter_after\n1,500,06:00,07:00,10,25.5"); ok(!mb2.needsMapping && mb2.rows[0].kwh === 15.5, "no kwh column at all: meters suffice");
+  // unmapped fallback + user mapping
+  const um = E.parseHeatLog("Furnace run,Metal poured,Begin,Finish,Units used\n1,500,06:00,07:00,300");
+  ok(um.needsMapping && um.unmapped.join() === "weight,start,tap,kwh" && um.headers.length === 5 && !um.rows.length, "unmapped fallback lists required fields");
+  const um2 = E.parseHeatLog("Furnace run,Metal poured,Begin,Finish,Units used\n1,500,06:00,07:00,300\n2,0.52,08:00,09:00,310", { map: { heat: "Furnace run", weight: "Metal poured", start: "Begin", tap: "Finish", kwh: "Units used" }, weightUnit: "t" });
+  ok(!um2.needsMapping && um2.rows.length === 2 && um2.rows[1].tonnes === 0.52 && um2.rows[0].heat === "1", "user mapping + unit applies");
+  const um3 = E.parseHeatLog("Begin,Finish,Units used,Metal poured\n06:00,07:00,300,500", { map: { start: "Begin", tap: "Finish", kwh: "Units used", weight: "Metal poured" } });
+  ok(!um3.needsMapping && um3.rows[0].tonnes === 0.5, "mapping with default kg");
+  ok(E.parseHeatLog("heat,wt,start,tap,kwh\n1,500,06:00,07:00,300", { map: { kwh: "" } }).unmapped.join() === "kwh", "explicit 'none' unmaps a field");
+  // report
+  const lg = E.parseHeatLog("heat,grade,wt,start,tap,kwh,remarks\n1,A,500,06:00,07:30,310,\n2,A,520,08:00,09:30,330,hold <b>x</b>"), st = E.logStats(lg.rows, 0.71);
+  const rep = E.reportHtml({ date: "2026-01-02", source: 'my <label> "x"', ef: 0.71, efSource: "CEA FY2024-25 v21 (provisional)", stats: st, rows: lg.rows.map(r => Object.assign({ hash: "abcdef123456" }, r)), hasGrade: true, hasRemarks: true, anchor: "f".repeat(64), seriesAnchor: null, calibration: { n: 5, nHold: 3, hold_kw_est: 99, fixed_est: 60, kwh_per_t_melt_est: 510 }, seriesInfo: "x", comparison: null });
+  ok(rep.includes("my &lt;label&gt; &quot;x&quot;") && rep.includes("f".repeat(64)) && rep.includes("@page{size:A4") && rep.includes("window.print()") && rep.includes("observational") && rep.includes("CEA FY2024-25") && rep.includes("Only 5 heat(s)"), "report content");
+  ok(!/(src|href)\s*=|@import|url\(|<link|<script/i.test(rep) && !rep.includes("<b>x</b>"), "report has no external requests and escapes user text");
+  ok(!/field_evidence|project_description/i.test(rep), "report names nothing else");
 }
 // study smoke: planner should beat baseline on kWh/t
 const cfg = E.BASE, sm = E.summarize(E.study(90, 1, cfg), cfg);

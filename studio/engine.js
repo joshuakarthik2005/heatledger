@@ -278,45 +278,88 @@
   }
 
   // ---- CSV helpers ----
-  function parseClock(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s).trim()); if (!m || +m[1] > 23 || +m[2] > 59) return NaN; return (+m[1]) * 60 + (+m[2]); }
-  function splitCsvLine(line) { // handles "quoted, fields" and "" escapes; no multi-line fields
-    const out = []; let cur = "", q = false;
+  function parseClock(s) { // H:MM, H:MM:SS, optional AM/PM, optional leading date (spreadsheet cells)
+    const m = /^(?:\d{4}-\d{2}-\d{2}[T ]|\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\s+)?(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i.exec(String(s).trim());
+    if (!m) return NaN; let h = +m[1]; const mi = +m[2], ap = m[3] && m[3].toLowerCase();
+    if (ap) { if (h < 1 || h > 12) return NaN; h = (h % 12) + (ap === "pm" ? 12 : 0); }
+    if (h > 23 || mi > 59) return NaN; return h * 60 + mi;
+  }
+  function detectDelimiter(line) { // pasted spreadsheet cells are tab-separated; European CSV uses semicolons
+    const c = ch => line.split(ch).length - 1, t = c("\t"), sc = c(";"), co = c(",");
+    return t > 0 && t >= sc ? "\t" : sc > co ? ";" : ",";
+  }
+  function splitCsvLine(line, delim) { // handles "quoted, fields" and "" escapes; no multi-line fields
+    delim = delim || ","; const out = []; let cur = "", q = false;
     for (let i = 0; i < line.length; i++) { const c = line[i];
       if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-      else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; }
+      else if (c === '"') q = true; else if (c === delim) { out.push(cur); cur = ""; } else cur += c; }
     out.push(cur); return out.map(s => s.trim());
   }
   function readCsv(text) {
     const lines = String(text).replace(/^﻿/, "").replace(/\r/g, "").split("\n").filter(l => l.trim());
-    if (!lines.length) return { head: [], rows: [] };
-    const head = splitCsvLine(lines[0]).map(s => s.toLowerCase());
-    return { head, rows: lines.slice(1).map(l => { const c = splitCsvLine(l), o = {}; head.forEach((k, i) => o[k] = (c[i] || "").trim()); return o; }) };
+    if (!lines.length) return { head: [], raw: [], table: [], rows: [], delim: "," };
+    const delim = detectDelimiter(lines[0]), raw = splitCsvLine(lines[0], delim), head = raw.map(s => s.toLowerCase());
+    const table = lines.slice(1).map(l => splitCsvLine(l, delim).map(v => delim === ";" && /^-?\d+,\d+$/.test(v) ? v.replace(",", ".") : v));
+    return { head, raw, table, delim, rows: table.map(c => { const o = {}; head.forEach((k, i) => o[k] = (c[i] || "").trim()); return o; }) };
   }
   function parseCsv(text) { return readCsv(text).rows; }
-  const num = s => (s === undefined || s === "" ? NaN : Number(s));
+  const num = s => { if (s === undefined || s === null) return NaN; s = String(s).trim(); if (s === "") return NaN;
+    if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, ""); return Number(s); };
 
-  // ---- heat log: heat, grade, weight_kg (or tonnes), start, tap, kwh, remarks. Times HH:MM, absolute minutes across midnights ----
-  function parseHeatLog(text) {
-    const { head, rows } = readCsv(text), out = [], skipped = [], errors = [], warnings = [];
-    if (!head.length) return { rows: [], skipped, errors: ["Empty input."], warnings };
-    ["start", "tap", "kwh"].forEach(k => { if (head.indexOf(k) < 0) errors.push('Missing column "' + k + '".'); });
-    if (head.indexOf("weight_kg") < 0 && head.indexOf("tonnes") < 0) errors.push('Missing column "weight_kg" (or "tonnes").');
-    if (errors.length) return { rows: [], skipped, errors, warnings };
-    let day = 0, prevStart = null, crossings = 0;
-    rows.forEach((r, n) => {
-      const line = n + 2, s = parseClock(r.start), t = parseClock(r.tap), kwh = num(r.kwh), wkg = num(r.weight_kg);
-      const tonnes = wkg > 0 ? wkg / 1000 : num(r.tonnes);
-      const why = isNaN(s) ? "bad start time" : isNaN(t) ? "bad tap time" : !(tonnes > 0) ? "missing or non-positive weight" : !(kwh > 0) ? "missing or non-positive kwh" : null;
+  // ---- header alias matching ("Wt (kg)", "Heat No.", "kWh (meter)" ...) ----
+  const ALIAS = { heat: ["heat", "heatno", "no", "heatnumber", "heatnum"], grade: ["grade"],
+    start: ["start", "starttime", "chargingtime", "charging"], tap: ["tap", "taptime", "tapping", "tappingtime"],
+    kwh: ["kwh", "kwhmeter", "energy", "meterkwh", "energykwh"], remarks: ["remarks", "remark", "note", "notes"],
+    meter_before: ["meterbefore", "meterbeforekwh"], meter_after: ["meterafter", "meterafterkwh"], hold_min: ["holdmin", "holdminutes"] };
+  const WEIGHT_ALIAS = { weightkg: "kg", wtkg: "kg", chargekg: "kg", metalkg: "kg", wt: null, weight: null, charge: null, metal: null,
+    tonnes: "t", tonne: "t", tons: "t", weightt: "t", weighttonnes: "t", wtt: "t", charget: "t", chargetonnes: "t", metalt: "t" };
+  function headerKey(h) { // -> {key, unit}: lower-case, units pulled out of (brackets), punctuation stripped
+    let s = String(h).replace(/^﻿/, "").toLowerCase().trim(), unit = null;
+    s = s.replace(/[(\[]([^)\]]*)[)\]]/g, (m, inner) => { const u = inner.replace(/[^a-z]/g, "");
+      if (u === "kg" || u === "kgs") unit = "kg"; else if (["t", "tonnes", "tonne", "tons", "ton", "mt"].indexOf(u) >= 0) unit = "t"; return " "; });
+    return { key: s.replace(/[^a-z0-9]+/g, ""), unit };
+  }
+  function autoMap(raw) { // -> { field: {idx, unit} } ; first matching header wins per field
+    const map = {};
+    raw.forEach((h, idx) => { const { key, unit } = headerKey(h);
+      for (const f in ALIAS) if (!map[f] && ALIAS[f].indexOf(key) >= 0) { map[f] = { idx, unit: null }; return; }
+      if (!map.weight && Object.prototype.hasOwnProperty.call(WEIGHT_ALIAS, key)) map.weight = { idx, unit: unit || WEIGHT_ALIAS[key] || null }; });
+    return map;
+  }
+  const REQUIRED = ["weight", "start", "tap", "kwh"];
+  // opts.map: { field: "raw header name" | "" } overrides; opts.weightUnit: "kg" | "t".
+  function parseHeatLog(text, opts) {
+    opts = opts || {}; const rc = readCsv(text), out = [], skipped = [], errors = [], warnings = [];
+    if (!rc.raw.length) return { rows: [], skipped, errors: ["Empty input."], warnings, headers: [], mapping: {}, unmapped: [], needsMapping: false };
+    const map = autoMap(rc.raw);
+    Object.keys(opts.map || {}).forEach(f => { const v = opts.map[f]; const idx = v ? rc.raw.indexOf(v) : -1;
+      if (idx >= 0) map[f] = { idx, unit: f === "weight" ? headerKey(v).unit : null }; else delete map[f]; });
+    const mapping = {}; Object.keys(map).forEach(f => mapping[f] = rc.raw[map[f].idx]);
+    const haveKwh = map.kwh || (map.meter_before && map.meter_after);
+    const unmapped = REQUIRED.filter(f => f === "kwh" ? !haveKwh : !map[f]);
+    const base = { headers: rc.raw, mapping, unmapped, weightUnit: opts.weightUnit || (map.weight && map.weight.unit) || "kg", delimiter: rc.delim };
+    if (unmapped.length) return Object.assign({ rows: [], skipped, errors, warnings, needsMapping: true }, base);
+    const wu = base.weightUnit, cell = (c, f) => (map[f] ? (c[map[f].idx] || "").trim() : "");
+    let day = 0, prevStart = null, crossings = 0, negMeter = 0;
+    rc.table.forEach((c, n) => {
+      const line = n + 2, s = parseClock(cell(c, "start")), t = parseClock(cell(c, "tap")), w = num(cell(c, "weight"));
+      let kwh = num(cell(c, "kwh")), fromMeters = false;
+      if (!(kwh > 0) && isNaN(kwh) && map.meter_before && map.meter_after) { const b = num(cell(c, "meter_before")), a = num(cell(c, "meter_after"));
+        if (!isNaN(a) && !isNaN(b)) { kwh = a - b; fromMeters = true; if (kwh < 0) { negMeter++; warnings.push("Line " + line + ": meter_after is lower than meter_before (" + kwh.toFixed(1) + " kWh); row skipped. Meter rollover or swapped columns?"); } } }
+      const tonnes = wu === "t" ? w : w / 1000;
+      const why = isNaN(s) ? "bad start time" : isNaN(t) ? "bad tap time" : !(tonnes > 0) ? "missing or non-positive weight" : !(kwh > 0) ? (fromMeters && kwh < 0 ? "negative kWh from meters" : "missing or non-positive kwh") : null;
       if (why) { skipped.push({ line, reason: why }); return; }
       let start = day * 1440 + s;
       while (prevStart !== null && start < prevStart) { day++; start += 1440; crossings++; }
-      const tap = start - s + t + (t < s ? 1440 : 0), remarks = r.remarks || "";
-      out.push({ line, heat: r.heat || String(out.length + 1), grade: r.grade || "", tonnes, kwh, perT: kwh / tonnes, start, tap, remarks,
-        flagged: /hold|long/i.test(remarks), hold: r.hold_min ? +r.hold_min : null });
+      const tap = start - s + t + (t < s ? 1440 : 0), remarks = cell(c, "remarks"), hm = cell(c, "hold_min");
+      out.push({ line, heat: cell(c, "heat") || String(out.length + 1), grade: cell(c, "grade"), tonnes, kwh, perT: kwh / tonnes, start, tap, remarks,
+        flagged: /hold|long/i.test(remarks), hold: hm ? +hm : null, fromMeters });
       prevStart = start;
     });
     if (crossings || out.some(o => o.tap >= 1440)) warnings.push("Run crosses midnight: times were read as a continuous multi-day run.");
-    return { rows: out, skipped, errors, warnings };
+    if (out.some(o => o.fromMeters)) warnings.push(out.filter(o => o.fromMeters).length + " row(s) used kWh = meter_after − meter_before.");
+    if (map.weight && !map.weight.unit && !opts.weightUnit) warnings.push("Weight column has no unit in its header; read as kilograms. Choose tonnes in the column mapping if that is wrong.");
+    return Object.assign({ rows: out, skipped, errors, warnings, needsMapping: false }, base);
   }
   function logStats(rows, ef) {
     const agg = a => { const t = a.reduce((x, r) => x + r.tonnes, 0), k = a.reduce((x, r) => x + r.kwh, 0); return { n: a.length, tonnes: t, kwh: k, kwh_t: t ? k / t : NaN, kg_t: t ? k / t * ef : NaN }; };
@@ -388,8 +431,50 @@
     return { pairs, mad: pairs.length ? pairs.reduce((a, x) => a + Math.abs(x.pct), 0) / pairs.length : NaN };
   }
 
+  // ---- printable pilot report (self-contained HTML string: inline CSS, no external requests) ----
+  function reportHtml(d) {
+    const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const f0 = x => Math.round(x), f1 = x => Number(x).toFixed(1), clock = m => { m = Math.round(m); return String(Math.floor(m / 60) % 24).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0") + (m >= 1440 ? " +" + Math.floor(m / 1440) + "d" : ""); };
+    const S = d.stats, ef = d.ef, tile = (v, l) => '<div class="t"><b>' + v + "</b><span>" + l + "</span></div>";
+    let h = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>HeatLedger pilot report ' + esc(d.date) + "</title><style>" +
+      "@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font:11pt/1.4 system-ui,Segoe UI,Roboto,Arial,sans-serif;color:#111;background:#fff;margin:0;padding:18px;max-width:190mm}" +
+      "h1{font-size:20pt;margin:0 0 2px}h2{font-size:13pt;margin:16px 0 6px;border-bottom:1px solid #999;padding-bottom:2px}.m{color:#444;font-size:10pt}" +
+      ".g{display:flex;flex-wrap:wrap;gap:8px}.t{border:1px solid #999;border-radius:6px;padding:6px 10px;min-width:42mm}.t b{display:block;font-size:14pt}.t span{font-size:9pt;color:#444}" +
+      "table{width:100%;border-collapse:collapse;font-size:8.5pt}th,td{border-bottom:1px solid #bbb;padding:3px 4px;text-align:right}th:first-child,td:first-child{text-align:left}th{background:#eee}" +
+      ".h{font-family:ui-monospace,Consolas,monospace;font-size:8pt;word-break:break-all}.box{border:1.5px solid #333;border-radius:6px;padding:8px 12px;margin-top:14px;break-inside:avoid}" +
+      ".w{border:1px solid #a60;background:#fff4e5;padding:4px 8px;margin:6px 0;font-size:10pt}tr{break-inside:avoid}.bar{margin-bottom:12px}button{font:inherit;padding:8px 16px;margin-right:8px;cursor:pointer}" +
+      "@media print{.noprint{display:none}body{padding:0;max-width:none}}</style></head><body>" +
+      '<div class="bar noprint"><button onclick="window.print()">Print / Save as PDF</button><button onclick="window.close()">Close</button> <span class="m">Generated in your browser; nothing was uploaded.</span></div>' +
+      "<h1>HeatLedger pilot report</h1><div class=m>Date: " + esc(d.date) + "</div>" +
+      '<div class="m"><b>Data source:</b> ' + esc(d.source) + "</div>" +
+      "<h2>Summary</h2><div class=g>" + tile(S.all.n, "heats") + tile(S.all.tonnes.toFixed(2) + " t", "metal") + tile(f0(S.all.kwh) + " kWh", "energy") +
+      tile(f0(S.all.kwh_t) + " kWh/t", "weighted average (range " + f0(S.min) + "–" + f0(S.max) + ")") + tile(f0(S.all.kwh_t * ef) + " kgCO₂e/t", "at " + esc(ef) + " tCO₂/MWh") + "</div>" +
+      '<div class="m" style="margin-top:6px">Emission factor: ' + esc(ef) + " tCO₂/MWh. Source: " + esc(d.efSource) + ". Energy is as recorded in the data source; no meter was audited.</div>" +
+      "<h2>Per-heat receipts</h2><table><tr><th>Heat</th>" + (d.hasGrade ? "<th>Grade</th>" : "") + "<th>Window</th><th>t</th><th>kWh</th><th>kWh/t</th><th>kgCO₂e/t</th>" + (d.hasRemarks ? "<th>Remarks</th>" : "") + "<th>Hash (first 12)</th></tr>" +
+      d.rows.map(r => "<tr><td>" + esc(r.heat) + "</td>" + (d.hasGrade ? "<td>" + esc(r.grade) + "</td>" : "") + "<td>" + clock(r.start) + "–" + clock(r.tap) + "</td><td>" + r.tonnes.toFixed(3) + "</td><td>" + f0(r.kwh) + "</td><td>" + f0(r.perT) + "</td><td>" + f0(r.perT * ef) + "</td>" +
+        (d.hasRemarks ? "<td>" + esc(r.remarks) + (r.flagged ? " ⚑" : "") + "</td>" : "") + '<td class="h">' + esc(r.hash) + "</td></tr>").join("") + "</table>";
+    if (S.flagged.n) h += '<h2>Flagged heats (remarks contain "hold" or "long") — observational</h2><div class=g>' + tile(S.flagged.n + " heats", "flagged") + tile(f0(S.flagged.kwh_t) + " kWh/t", "flagged average") +
+      (S.rest.n ? tile(f0(S.rest.kwh_t) + " kWh/t", "other " + S.rest.n + " heats") + tile((S.diff >= 0 ? "+" : "") + f0(S.diff) + " kWh/t", "flagged minus rest") : "") +
+      '</div><div class="m">Observational only: groups of heats compared as they happened, not a controlled test. Flagged heats may differ in grade, size or start-up condition.</div>';
+    if (d.calibration) { const c = d.calibration, fin = v => v != null && isFinite(v);
+      h += "<h2>Calibration from the meter series</h2>" + (c.n < 20 ? '<div class="w">Only ' + c.n + " heat(s) used; 20 or more are needed for reliable estimates.</div>" : "") + "<div class=g>" +
+        tile(fin(c.hold_kw_est) ? f1(c.hold_kw_est) + " kW" : "n/a", "estimated holding power (" + c.nHold + " heats with a hold phase)") + tile(fin(c.fixed_est) ? f1(c.fixed_est) + " kWh" : "n/a", "fixed energy per heat") +
+        tile(fin(c.kwh_per_t_melt_est) ? f1(c.kwh_per_t_melt_est) + " kWh/t" : "n/a", "melt energy") + tile(c.n, "heats used") + "</div>" +
+        '<div class="m">Series: ' + esc(d.seriesInfo || "") + "</div>"; }
+    if (d.comparison) { const C = d.comparison;
+      h += "<h2>Meter series vs heat log (kWh per heat)</h2><div class=g>" + tile(C.pairs.length, "heats compared") + tile(C.mad.toFixed(1) + "%", "mean absolute difference") + "</div><table><tr><th>Heat</th><th>Meter kWh</th><th>Log kWh</th><th>Difference</th></tr>" +
+        C.pairs.map(p => "<tr><td>" + esc(p.id) + "</td><td>" + f1(p.meter) + "</td><td>" + f1(p.log) + "</td><td>" + (p.pct >= 0 ? "+" : "") + p.pct.toFixed(1) + "%</td></tr>").join("") + "</table>"; }
+    h += "<h2>Anchor</h2><div class=m>Head hash of the receipt chain built from the heat log (post this outside the plant to fix the record in time):</div><div class=h>" + esc(d.anchor) + "</div>";
+    if (d.seriesAnchor) h += '<div class="m" style="margin-top:6px">Head hash of the meter-series receipt chain:</div><div class="h">' + esc(d.seriesAnchor) + "</div>";
+    h += '<div class="box"><b>Limits</b><ul style="margin:4px 0 0 18px;padding:0"><li>Hashes from a heat log prove the log was not changed afterwards; they do not prove the figures were correct.</li>' +
+      "<li>Sample size: " + S.all.n + " heat(s)" + (S.all.n < 20 ? " (small; averages and comparisons are noisy)" : "") + ". Flagged-heat comparisons are observational.</li>" +
+      "<li>Energy figures are as supplied (" + esc(d.source) + "); the emission factor is a grid average, not a plant-specific measurement.</li>" +
+      "<li>Planner and break-even results elsewhere in HeatLedger Studio come from a synthetic model with assumed parameters and are not part of this report.</li></ul></div></body></html>";
+    return h;
+  }
+
   return { BASE, pyround, pyFloat, multMinute, avgm, meltMin, makeRng, makeDay, baselinePlan, planDP, evaluate, study, summarize,
     powerSeries, detectClean, matchHeats, calibrate, sha256, buildChain, verifyChain, rechainFrom, payload, receiptFromReadings, parseClock, parseCsv, ZERO,
-    exportChain, parseChainJson, verifyChainDetail, splitCsvLine, readCsv, parseHeatLog, logStats, parseTimestamp, parseSeries, defaultMeltThreshold,
-    describeDetected, matchLog, seriesReceipts, compareLog, median };
+    exportChain, parseChainJson, verifyChainDetail, splitCsvLine, readCsv, detectDelimiter, headerKey, autoMap, parseHeatLog, logStats, parseTimestamp, parseSeries, defaultMeltThreshold,
+    describeDetected, matchLog, seriesReceipts, compareLog, median, reportHtml };
 });

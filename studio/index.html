@@ -38,8 +38,9 @@
 <section id="t4">
  <div class="seg" id="modes"><button class="on" data-m="mLog">Heat log CSV</button><button data-m="mSer">1-minute meter series CSV</button></div>
  <div id="mLog">
- <div class="card"><h2>Your heat log</h2><p class="mut">CSV columns: <span class="hash">heat,grade,weight_kg,start,tap,kwh,remarks</span>. Grade and remarks are optional; header names are case-insensitive; the older <span class="hash">tonnes</span> column (instead of weight_kg) and <span class="hash">hold_min</span> still work. Times are HH:MM: a tap earlier than the start, or a start earlier than the previous heat's start, is read as crossing midnight. Remarks containing "hold" or "long" flag a heat. Parsed in your browser only.</p>
+ <div class="card"><h2>Your heat log</h2><p class="mut">Columns: <span class="hash">heat, grade, weight_kg, start, tap, kwh, remarks</span>. Common header variants are recognised (for example "Heat No.", "Wt (kg)", "Tap time", "kWh (meter)", "Notes"); if a required column is not recognised you will be asked to map it. Grade and remarks are optional. If kwh is blank, <span class="hash">meter_after − meter_before</span> is used. Comma, semicolon and tab-separated text (including cells pasted from a spreadsheet) all work; weights are kilograms unless the header says tonnes. Times are HH:MM: a tap earlier than the start, or a start earlier than the previous heat's start, is read as crossing midnight. Remarks containing "hold" or "long" flag a heat. Parsed in your browser only.</p>
  <input type="file" id="file" accept=".csv,text/csv"> <p></p><textarea id="csv" rows="7" placeholder="heat,grade,weight_kg,start,tap,kwh,remarks&#10;1,SG,480,06:00,07:30,310,"></textarea>
+ <div id="mapBox"></div>
  <div class="row" style="align-items:end"><div><label>Emission factor tCO₂/MWh</label><input id="ef" type="number" step="0.001" value="0.710"></div><div><label>Base tariff ₹/kWh</label><input id="tar" type="number" step="0.1" value="7"></div>
  <div><button class="act" id="calc">Compute receipts</button> <button class="act alt" id="sample">Load synthetic sample</button></div></div></div>
  <div class="card" id="outCard" style="display:none"><h2>Results</h2><div id="lWarn"></div><div class="row" id="sumTiles"></div><div class="tw" id="tbl"></div><div id="flagBox"></div>
@@ -61,6 +62,9 @@
   <p><button class="act" id="expChain2">Export chain JSON</button> <button class="act" id="copyAnchor2">Copy anchor</button> <a href="verify.html">Open the verifier →</a></p><p class="note" id="expNote2"></p>
   <div id="cmpBox"></div><h2 style="margin-top:14px">Calibration</h2><div id="calBox"></div></div>
  </div>
+<div class="card" id="repCard"><h2>Pilot report</h2><p class="mut">A clean A4 page with your summary, per-heat receipts, anchor and limits, ready to print or save as PDF. It is built in your browser; nothing is uploaded.</p>
+ <label>Data source label (printed exactly as typed; please do not enter foundry names)</label><input id="srcLabel" value="user-supplied heat log, unaudited">
+ <p><button class="act" id="report">Pilot report</button> <span class="mut" id="repNote"></span></p></div>
 </section>
 </main>
 <script src="engine.js"></script><script src="app.js"></script></body></html>
