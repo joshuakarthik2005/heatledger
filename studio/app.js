@@ -143,9 +143,22 @@
     $("detTbl").innerHTML = "<table><tr><th>#</th><th>Window</th><th>Min</th><th>kWh detected</th><th>Melt kWh</th><th>Hold kW</th><th>Log heat</th><th>Tonnes</th></tr>" + S.desc.map((d, i) => "<tr><td>" + (i + 1) + "</td><td>" + abs(d.start) + "–" + abs(d.end) + "</td><td>" + (d.end - d.start) + "</td><td>" + f1(d.kwhDet) + "</td><td>" + f1(d.meltKwh) + "</td><td>" + (d.holdKw == null ? "–" : f1(d.holdKw)) +
       "</td><td>" + (S.match[i] >= 0 && L ? esc(L[S.match[i]].heat) : "–") + '</td><td><input class="tn" type="number" step="0.01" min="0" data-i="' + i + '" value="' + (S.tonnes[i] > 0 ? +S.tonnes[i].toFixed(3) : "") + '"></td></tr>').join("") + "</table>";
   }
+  let serMap = null; const SFIELDS = [["ts", "Timestamp", 1], ["kw", "Total power", 1], ["l1", "Phase 1 power", 0], ["l2", "Phase 2 power", 0], ["l3", "Phase 3 power", 0], ["kva", "kVA", 0], ["pf", "Power factor", 0]];
+  function sMapUi(P) {
+    const opt = f => '<option value="">— none —</option>' + P.headers.map(h => '<option' + (P.mapping[f] === h ? " selected" : "") + ' value="' + esc(h) + '">' + esc(h) + "</option>").join("");
+    return '<div class="card" style="margin-top:12px"><h3>Map your columns</h3><p class="mut">Could not find ' + (P.unmapped.indexOf("ts") >= 0 ? "a timestamp column" : "") + (P.unmapped.length > 1 ? " and " : "") + (P.unmapped.indexOf("kw") >= 0 ? "a power column (total, or all phases)" : "") + ". Pick the columns of your file. Leave phases empty if you have a total.</p><div class=\"row\">" +
+      SFIELDS.map(([f, l, req]) => "<div><label>" + l + (req ? " *" : " (optional)") + '</label><select data-f="' + f + '">' + opt(f) + "</select></div>").join("") +
+      '<div><label>Power unit</label><select id="sMapUnit"><option value="auto">auto-detect</option><option value="kw">kilowatts</option><option value="w">watts</option></select></div></div>' +
+      '<p><button class="act" id="sMapApply">Apply mapping</button> <span class="mut">Header row found at line ' + (P.preamble + 1) + "; delimiter: " + (P.delimiter === "	" ? "tab" : P.delimiter === ";" ? "semicolon" : "comma") + "</span></p></div>"; }
+  $("sMapBox").onclick = ev => { if (ev.target.id !== "sMapApply") return; const map = {}; $("sMapBox").querySelectorAll("select[data-f]").forEach(sel => map[sel.dataset.f] = sel.value);
+    const P0 = E.parseSeries($("scsv").value); serMap = { sig: P0.sig, map, unit: $("sMapUnit").value }; detect(); };
+  $("scsv").addEventListener("input", () => { serMap = null; });
   function detect() {
-    const np = +$("np").value, ps = E.parseSeries($("scsv").value, { nameplate: np }), he = +$("he").value, mt = +$("mt").value;
-    $("detCard").style.display = "none"; $("recCard").style.display = "none"; SER = null;
+    const np = +$("np").value, txt = $("scsv").value; let ps = E.parseSeries(txt, { nameplate: np, now: new Date() });
+    if (serMap && ps.sig === serMap.sig) ps = E.parseSeries(txt, { nameplate: np, now: new Date(), map: serMap.map, unit: serMap.unit }); else serMap = null;
+    const he = +$("he").value, mt = +$("mt").value;
+    $("detCard").style.display = "none"; $("recCard").style.display = "none"; SER = null; $("sMapBox").innerHTML = "";
+    if (ps.needsMapping) { $("sWarn").innerHTML = ps.warnings.map(w => '<div class="warn">' + esc(w) + "</div>").join(""); $("sMapBox").innerHTML = sMapUi(ps); return; }
     const w = ps.warnings.slice(); if (ps.errors.length) { warnBox("sWarn", ps.errors.concat(w)); return; }
     if (mt <= 1.2 * he) w.push("Melt threshold (" + mt + " kW) is close to the holding-power estimate (" + he + " kW): holding periods may be detected as melts. Lower the holding estimate or raise the threshold if you see false heats.");
     const det = E.detectClean(ps.p, he, mt), desc = E.describeDetected(ps.p, det, mt, ps.t0);
@@ -155,7 +168,7 @@
     $("detCard").style.display = "block"; $("matchNote").textContent = ""; renderDet();
   }
   $("detect").onclick = detect;
-  $("sfile").onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => { $("scsv").value = t; detect(); }); };
+  $("sfile").onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => { $("scsv").value = t; serMap = null; detect(); }); };
   $("detTbl").oninput = ev => { const i = ev.target.dataset && ev.target.dataset.i; if (i != null && SER) SER.tonnes[+i] = parseFloat(ev.target.value); };
   $("matchBtn").onclick = () => { if (!SER) return; const P = parseLog();
     if (!P.rows.length) { $("matchNote").textContent = "No valid heat log loaded. Paste one in the “Heat log CSV” mode first (or use the synthetic sample series, which also loads a synthetic log)."; return; }
@@ -210,7 +223,7 @@
     return null;
   }
   $("sSample").onclick = () => { const S = syntheticSample(); if (!S) { warnBox("sWarn", ["Could not generate a sample."]); return; }
-    $("scsv").value = S.series; $("csv").value = S.log; $("np").value = 1500; $("mt").value = 200; mtTouched = true; $("he").value = 100; calc(); detect();
+    $("scsv").value = S.series; serMap = null; $("csv").value = S.log; $("np").value = 1500; $("mt").value = 200; mtTouched = true; $("he").value = 100; calc(); detect();
     $("sWarn").insertAdjacentHTML("afterbegin", '<div class="warn"><b>SYNTHETIC sample.</b> Four simulated days generated in your browser by the reference model (engine.powerSeries) with nameplate 1500 kW and melt threshold 200 kW; a synthetic heat log was also loaded into the Heat log mode so you can try matching. No real foundry data.</div>'); };
 
   // --- pilot report (opens a self-contained printable page; nothing is uploaded) ---

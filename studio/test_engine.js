@@ -136,6 +136,100 @@ ok(/anchor/.test(E.verifyChain(rc, anchor)), "rechain fails vs anchor");
   ok(!/(src|href)\s*=|@import|url\(|<link|<script/i.test(rep) && !rep.includes("<b>x</b>"), "report has no external requests and escapes user text");
   ok(!/field_evidence|project_description/i.test(rep), "report names nothing else");
 }
+// ---- analyzer-export series import. ALL ROWS BELOW ARE INVENTED: made-up numbers around 4.8 kW, no real foundry or lab data. ----
+{
+  const now = new Date(2026, 10, 27, 12, 0), NP = 550, HDR = "Timestamp,L1_kW,L2_kW,L3_kW,Total_kW,Total_kVA,Power_Factor";
+  const stamp = i => "2026-11-27 " + String(10 + Math.floor(i / 60)).padStart(2, "0") + ":" + String(i % 60).padStart(2, "0") + ":00";
+  const rowsOf = (n, f) => Array.from({ length: n }, (_, i) => { const l1 = +(1.6 + (i % 3) * 0.02).toFixed(2), l2 = +(1.6 + (i % 4) * 0.01).toFixed(2), l3 = +(1.6 - (i % 2) * 0.02).toFixed(2), tot = +(l1 + l2 + l3).toFixed(2), kva = +(tot / 0.96).toFixed(2);
+    return Object.assign({ ts: stamp(i), l1, l2, l3, tot, kva, pf: 0.96 }, f ? f(i) : {}); });
+  const toText = rs => [HDR].concat(rs.map(r => [r.ts, r.l1, r.l2, r.l3, r.tot, r.kva, r.pf].join(","))).join("\n");
+  const P = (text, o) => E.parseSeries(text, Object.assign({ nameplate: NP, now }, o || {}));
+  const has = (r, re) => r.warnings.some(w => re.test(w));
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  // exact layout, 11 rows
+  const base = P(toText(rowsOf(11)));
+  ok(!base.errors.length && base.n === 11 && base.p.length === 11 && base.step === 1 && base.t0 === 600, "layout file parses: " + JSON.stringify(base.errors));
+  ok(!base.warnings.length, "clean layout file raises no warnings: " + JSON.stringify(base.warnings));
+  ok(near(base.p[0], 4.8) && base.max > 4.7 && base.max < 4.9, "uses Total_kW (about 4.8 kW)");
+  ok(base.mapping.kw === "Total_kW" && base.mapping.l1 === "L1_kW" && base.mapping.kva === "Total_kVA" && base.mapping.pf === "Power_Factor" && base.mapping.ts === "Timestamp", "mapping reports raw headers");
+  // other header spellings
+  const alt = (h, v) => P(h + "\n" + Array.from({ length: 11 }, (_, i) => stamp(i) + "," + v).join("\n"));
+  ["timestamp,kw", "Time,Total kW", "DateTime,total_kw", "Date & Time,P total (kW)", "date-time,Active Power Total", "Date Time,Power Total", "TIME,Total Power"].forEach(h => {
+    const r = alt(h, "4.8"); ok(!r.errors.length && !r.needsMapping && r.n === 11 && near(r.p[0], 4.8), "header spelling accepted: " + h); });
+  // per-phase only: summed
+  const pp = P(["Timestamp,L1_kW,L2_kW,L3_kW"].concat(rowsOf(11).map(r => [r.ts, r.l1, r.l2, r.l3].join(","))).join("\n"));
+  ok(!pp.errors.length && near(pp.p[0], 4.8) && has(pp, /summed 3 per-phase/), "per-phase columns are summed: " + JSON.stringify(pp.warnings));
+  const pp2 = P("time,p1,p2,p3\n" + rowsOf(11).map(r => [r.ts, r.l1, r.l2, r.l3].join(",")).join("\n"));
+  ok(!pp2.errors.length && near(pp2.p[0], 4.8), "p1/p2/p3 columns are summed");
+  // watts
+  const w1 = P(["Timestamp,Total_W"].concat(rowsOf(11).map(r => r.ts + "," + Math.round(r.tot * 1000))).join("\n"));
+  ok(!w1.errors.length && w1.wattsConverted && near(w1.p[0], 4.8) && has(w1, /watts/), "header with W converts to kW and warns");
+  const big = rowsOf(11).map(r => r.ts + "," + Math.round(r.tot * 1000 + 700));
+  const w2 = P(["timestamp,power"].concat(big).join("\n"));
+  ok(w2.wattsConverted && near(w2.p[0], 5.5) && has(w2, /median/), "median above 5000 with nameplate under 1000 kW converts");
+  ok(!P(["timestamp,power"].concat(big).join("\n"), { nameplate: 1500 }).wattsConverted, "no conversion when nameplate is 1000 kW or more");
+  const w4 = P(["timestamp,kw"].concat(big).join("\n"));
+  ok(!w4.wattsConverted && has(w4, /header says kW/), "header kW with watt-sized values warns, not converted");
+  const w5 = P(["timestamp,power"].concat(rowsOf(11).map(r => r.ts + "," + r.tot)).join("\n"), { unit: "w" });
+  ok(w5.wattsConverted && w5.p[0] < 0.01, "explicit unit choice W is honoured");
+  // semicolon + decimal comma, tab
+  const sc = P("Timestamp;Total_kW;Total_kVA;Power_Factor\n" + rowsOf(11).map(r => [r.ts, String(r.tot).replace(".", ","), String(r.kva).replace(".", ","), "0,96"].join(";")).join("\n"));
+  ok(!sc.errors.length && sc.n === 11 && near(sc.p[0], 4.8) && sc.delimiter === ";" && has(sc, /decimal comma/) && sc.warnings.length === 1, "semicolon decimal-comma file: " + JSON.stringify(sc.warnings));
+  const tabs = P(["Timestamp\tTotal_kW"].concat(rowsOf(11).map(r => r.ts + "\t" + r.tot)).join("\n"));
+  ok(!tabs.errors.length && tabs.n === 11, "tab-separated file");
+  // preamble
+  const pre = P(["Invented analyzer report", "Site: made-up lab, bay 3", "Exported: 27/11/2026 12:00", toText(rowsOf(11))].join("\n"));
+  ok(!pre.errors.length && pre.preamble === 3 && pre.n === 11 && has(pre, /3 preamble line/) && near(pre.p[0], 4.8), "3 preamble lines skipped: " + JSON.stringify(pre.warnings));
+  // timestamp formats
+  const ts = (s, o) => { const r = E.parseTimestamp(s, o); return r && r.t; }, d0 = (y, m, d, h, mi) => Date.UTC(y, m - 1, d, h || 0, mi || 0) / 60000;
+  ok(ts("2026-11-27 10:00:00") === d0(2026, 11, 27, 10, 0), "ISO with space");
+  ok(ts("27/11/2026 10:05") === d0(2026, 11, 27, 10, 5) && ts("27/11/2026 10:05:30") === d0(2026, 11, 27, 10, 5) + 0.5, "dd/mm/yyyy hh:mm[:ss]");
+  ok(ts("03/04/2026 00:00") === d0(2026, 4, 3), "dd/mm is day-first by default");
+  ok(ts("03/04/2026 00:00", { monthFirst: true }) === d0(2026, 3, 4), "month-first on request");
+  ok(ts("27-11-2026 10:05") === d0(2026, 11, 27, 10, 5) && ts("27.11.2026 10:05") === d0(2026, 11, 27, 10, 5), "dd-mm-yyyy and dd.mm.yyyy");
+  ok(ts("27/11/2026 12:00 AM") === d0(2026, 11, 27, 0, 0) && ts("27/11/2026 12:30 PM") === d0(2026, 11, 27, 12, 30) && ts("27/11/2026 01:05 pm") === d0(2026, 11, 27, 13, 5) && ts("2026-11-27 11:59 PM") === d0(2026, 11, 27, 23, 59), "12-hour AM/PM");
+  ok(ts("31/02/2026 10:00") === null && ts("27/11/2026 13:00 PM") === null && ts("garbage") === null, "invalid timestamps rejected");
+  const dm = P(["Timestamp,Total_kW"].concat(rowsOf(11).map((r, i) => "27/11/2026 " + stamp(i).slice(11) + "," + r.tot)).join("\n"));
+  ok(!dm.errors.length && dm.n === 11 && dm.t0 === 600 && !dm.warnings.length, "dd/mm/yyyy series: " + JSON.stringify(dm.warnings));
+  const mf = P(["Timestamp,Total_kW"].concat(rowsOf(11).map((r, i) => "11/27/2026 " + stamp(i).slice(11) + "," + r.tot)).join("\n"));
+  ok(!mf.errors.length && mf.n === 11 && has(mf, /month-first/), "mm/dd/yyyy detected from a day above 12");
+  const ap = P(["Timestamp,Total_kW"].concat(rowsOf(11).map((r, i) => "27-11-2026 10:" + String(i).padStart(2, "0") + " AM," + r.tot)).join("\n"));
+  ok(!ap.errors.length && ap.n === 11 && ap.t0 === 600, "AM/PM series");
+  // gap, duplicate, step
+  const gp = P(toText(rowsOf(14).filter((r, i) => i < 5 || i > 7)));
+  ok(!gp.errors.length && gp.missing === 3 && gp.gaps.length === 1 && gp.p.length === 14 && has(gp, /3 minute\(s\) have no reading/), "gap reported: " + JSON.stringify(gp.warnings));
+  const dup = rowsOf(11); dup.splice(4, 0, dup[4]);
+  const dp = P(toText(dup));
+  ok(!dp.errors.length && dp.duplicates === 1 && dp.n === 11 && dp.missing === 0 && has(dp, /1 duplicate timestamp/), "duplicate timestamp reported: " + JSON.stringify(dp.warnings));
+  const every = k => P(["Timestamp,Total_kW"].concat(Array.from({ length: 12 }, (_, i) => { const m = i * k; return "2026-11-27 " + String(10 + Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0") + ":00,4.8"; })).join("\n"));
+  const s5 = every(5), s10 = every(10), s15 = every(15);
+  ok(!s5.errors.length && s5.step === 5 && has(s5, /5 minutes, not 1/) && s5.p.length === 60, "5-minute accepted with warning");
+  ok(!s10.errors.length && s10.step === 10 && has(s10, /10 minutes, not 1/) && s10.p.length === 120 && s10.missing === 0, "10-minute accepted with warning");
+  ok(s15.errors.length === 1, "15-minute rejected");
+  // sanity warnings (never errors)
+  const warnOnly = (r, re, what) => ok(!r.errors.length && r.n === 11 && has(r, re), what + ": " + JSON.stringify(r.errors.concat(r.warnings)));
+  warnOnly(P(toText(rowsOf(11, i => i === 3 ? { tot: 5.2 } : {}))), /sum of the per-phase kW by more than 1%/, "total vs phase sum");
+  warnOnly(P(toText(rowsOf(11, i => i === 3 ? { kva: 4.0 } : {}))), /kVA is below kW/, "kVA below kW");
+  warnOnly(P(toText(rowsOf(11, i => i === 3 ? { pf: 1.2 } : {}))), /outside 0 to 1/, "PF above 1");
+  warnOnly(P(toText(rowsOf(11, i => i === 3 ? { pf: -0.2 } : {}))), /outside 0 to 1/, "PF below 0");
+  warnOnly(P(toText(rowsOf(11, i => i === 3 ? { pf: 0.8 } : {}))), /differs from kW\/kVA by more than 0.02/, "PF inconsistent with kW/kVA");
+  warnOnly(P(toText(rowsOf(11)), { nameplate: 2 }), /above 1.5x the furnace nameplate/, "reading above 1.5x nameplate");
+  warnOnly(P(toText(rowsOf(11)), { now: new Date(2026, 10, 27, 9, 0) }), /timestamps are in the future: check the instrument clock/i, "timestamps in the future");
+  ok(!has(P(toText(rowsOf(11)), { now: new Date(2026, 10, 27, 10, 30) }), /future/i), "past timestamps not flagged");
+  ok(!has(P(toText(rowsOf(11, i => i === 3 ? { pf: 0.97 } : {}))), /differs from kW\/kVA/), "PF within 0.02 not flagged");
+  ok(!has(P("timestamp,kw\n" + Array.from({ length: 11 }, (_, i) => "10:" + String(i).padStart(2, "0") + ",4.8").join("\n"), { now: new Date(2020, 0, 1) }), /future/i), "clock-only times never trigger the future check");
+  // mapping fallback
+  const odd = ["Invented export", "Reading time,Active load"].concat(Array.from({ length: 11 }, (_, i) => stamp(i) + ",4.8")).join("\n");
+  const m0 = P(odd);
+  ok(m0.needsMapping && m0.unmapped.join() === "ts,kw" && m0.headers.join("|") === "Reading time|Active load", "unrecognised headers ask for a mapping: " + JSON.stringify(m0.unmapped));
+  const m1 = P(odd, { map: { ts: "Reading time", kw: "Active load" } });
+  ok(!m1.needsMapping && m1.n === 11 && near(m1.p[0], 4.8) && m1.sig === m0.sig, "user mapping parses the file");
+  const m2 = P(odd, { map: { ts: "Reading time", kw: "" } });
+  ok(m2.needsMapping && m2.unmapped.join() === "kw", "mapping with no power column still asks");
+  const m3 = P("Reading time,Phase A,Phase B,Phase C\n" + Array.from({ length: 11 }, (_, i) => stamp(i) + ",1.6,1.6,1.6").join("\n"), { map: { ts: "Reading time", l1: "Phase A", l2: "Phase B", l3: "Phase C" } });
+  ok(!m3.needsMapping && near(m3.p[0], 4.8), "mapping per-phase columns by hand");
+  ok(E.parseSeries("").errors.length === 1 && E.parseSeries("timestamp,kw\n10:00,5").errors.length === 1, "empty and short input are errors");
+}
 // study smoke: planner should beat baseline on kWh/t
 const cfg = E.BASE, sm = E.summarize(E.study(90, 1, cfg), cfg);
 console.log("JS study (own RNG): save kWh/t", sm.save_kwh_t.toFixed(1), "hold b/p", sm.b.hold_h_day.toFixed(1), sm.p.hold_h_day.toFixed(1), "late b/p", sm.b.late_min_day.toFixed(1), sm.p.late_min_day.toFixed(1));

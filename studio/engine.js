@@ -368,38 +368,131 @@
       diff: fl.length && rest.length ? agg(fl).kwh_t - agg(rest).kwh_t : null };
   }
 
-  // ---- 1-minute (or 5-minute) meter series: timestamp (ISO or HH:MM), kw. No clipping of kW values. ----
-  function parseTimestamp(s) { // -> {abs minutes (UTC-style, deterministic) | clock-only minutes}
-    s = String(s).trim(); let m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
-    if (m) { if (+m[4] > 23 || +m[5] > 59) return null; return { iso: true, t: Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 60000 }; }
-    m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s); if (!m || +m[1] > 23 || +m[2] > 59) return null;
-    return { iso: false, t: (+m[1]) * 60 + (+m[2]) + (+(m[3] || 0)) / 60 };
+  // ---- meter series: tolerant import of analyzer exports (1-, 5- or 10-minute samples). No clipping of kW values. ----
+  function parseTimestamp(s, o) { // -> {iso, t} | null. t = minutes: absolute (UTC-style, deterministic) when a date is present, else minutes since midnight.
+    s = String(s).trim(); o = o || {}; let ap = null;
+    const am = /\s*([ap])\.?m\.?$/i.exec(s); if (am) { ap = am[1].toLowerCase(); s = s.slice(0, am.index).trim(); }
+    const hr = h => { if (ap) { if (h < 1 || h > 12) return -1; return (h % 12) + (ap === "p" ? 12 : 0); } return h; };
+    const mk = (y, mo, d, h, mi, sec) => { h = hr(h); if (h < 0 || h > 23 || mi > 59 || sec > 59 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+      const ms = Date.UTC(y, mo - 1, d, h, mi, sec); if (new Date(ms).getUTCDate() !== d) return null; return { iso: true, t: ms / 60000 }; };
+    let m = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:[T ,]+)(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+    if (m) return mk(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0));
+    m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})(?:[T ,]+)(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/.exec(s);
+    if (m) { const a = +m[1], b = +m[2], y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; return o.monthFirst ? mk(y, a, b, +m[4], +m[5], +(m[6] || 0)) : mk(y, b, a, +m[4], +m[5], +(m[6] || 0)); }
+    m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s); if (!m) return null;
+    const h = hr(+m[1]); if (h < 0 || h > 23 || +m[2] > 59 || +(m[3] || 0) > 59) return null;
+    return { iso: false, t: h * 60 + (+m[2]) + (+(m[3] || 0)) / 60 };
   }
+  // header recognition for series columns. unit: "kw" | "w" | null (unknown)
+  const S_TS = ["timestamp", "timestamps", "time", "datetime", "dateandtime", "datetimestamp"];
+  const S_TOTAL = { kw: "kw", totalkw: "kw", ptotal: null, ptotalkw: "kw", activepowertotal: null, activepowertotalkw: "kw", powertotal: null, powertotalkw: "kw",
+    totalpower: null, totalpowerkw: "kw", totalactivepower: null, totalactivepowerkw: "kw", activepower: null, activepowerkw: "kw", power: null, powerkw: "kw", pkw: "kw",
+    totalw: "w", ptotalw: "w", w: "w", totalpowerw: "w", powerw: "w", activepowerw: "w", activepowertotalw: "w", totalactivepowerw: "w" };
+  const S_KVA = { totalkva: "kva", kva: "kva", kvatotal: "kva", stotal: null, apparentpower: null, totalapparentpower: null, apparentpowerkva: "kva", totalva: "va", va: "va" };
+  const S_PF = ["powerfactor", "pf", "totalpf", "pftotal", "cosphi", "totalpowerfactor", "powerfactortotal"];
+  function seriesHeader(h) { // -> {key, bu}: bracketed unit pulled out ("P total (W)" -> ptotal, bu "w")
+    let s = String(h).replace(/^﻿/, "").toLowerCase().trim(), bu = null;
+    s = s.replace(/[(\[]([^)\]]*)[)\]]/g, (m, inner) => { const u = inner.replace(/[^a-z]/g, ""); if (["kw", "w", "mw", "kva", "va"].indexOf(u) >= 0) bu = u; return " "; });
+    return { key: s.replace(/[^a-z0-9]+/g, ""), bu };
+  }
+  function phaseOf(key) { let m = /^(?:l|pl|activepowerl|powerl)([123])(kw|w)$/.exec(key) || /^(?:p|pl)([123])(kw|w)?$/.exec(key) || /^(?:kwl|kw)([123])()$/.exec(key); return m ? { n: +m[1], unit: m[2] || null } : null; }
+  function seriesCols(raw) { // auto-detect -> { ts, total:{idx,unit}, phases:[{n,idx,unit}], kva:{idx,unit}, pf }
+    const c = { ts: -1, total: null, phases: [], kva: null, pf: -1 };
+    raw.forEach((h, idx) => { const { key, bu } = seriesHeader(h), unitOf = imp => (bu === "w" || bu === "mw") ? "w" : bu === "kw" ? "kw" : imp;
+      if (c.ts < 0 && S_TS.indexOf(key) >= 0) { c.ts = idx; return; }
+      if (Object.prototype.hasOwnProperty.call(S_TOTAL, key)) { const rk = key.indexOf("total") >= 0 ? 0 : 1;
+        if (!c.total || rk < c.total.rank) c.total = { idx, unit: unitOf(S_TOTAL[key]), rank: rk }; return; }
+      const ph = phaseOf(key); if (ph) { if (!c.phases.some(p => p.n === ph.n)) c.phases.push({ n: ph.n, idx, unit: unitOf(ph.unit) }); return; }
+      if (!c.kva && Object.prototype.hasOwnProperty.call(S_KVA, key)) { c.kva = { idx, unit: bu === "va" ? "va" : bu === "kva" ? "kva" : S_KVA[key] }; return; }
+      if (c.pf < 0 && S_PF.indexOf(key) >= 0) c.pf = idx; });
+    c.phases.sort((a, b) => a.n - b.n); return c;
+  }
+  const SER_FIELDS = ["ts", "kw", "l1", "l2", "l3", "kva", "pf"]; // keys of opts.map for series
+  // opts: { nameplate, map: {ts,kw,l1,l2,l3,kva,pf -> raw header name | ""}, unit: "auto"|"kw"|"w", now: Date }
   function parseSeries(text, opts) {
-    opts = opts || {}; const { head, rows } = readCsv(text), warnings = [], res = { p: new Float64Array(0), t0: 0, step: NaN, n: 0, skipped: 0, missing: 0, max: 0, warnings, errors: [] };
-    if (head.indexOf("timestamp") < 0 || head.indexOf("kw") < 0) { res.errors.push('Need columns "timestamp,kw".'); return res; }
-    const pts = []; let day = 0, prevClock = null, prevT = null, skipped = 0;
-    rows.forEach(r => {
-      const ts = parseTimestamp(r.timestamp), kw = num(r.kw);
-      if (!ts || !(kw >= 0) || !isFinite(kw)) { skipped++; return; }
-      let t = ts.t;
+    opts = opts || {}; const warnings = [], errors = [];
+    const res = { p: new Float64Array(0), t0: 0, step: NaN, n: 0, skipped: 0, missing: 0, max: 0, duplicates: 0, gaps: [], warnings, errors, needsMapping: false, unmapped: [], headers: [], mapping: {}, delimiter: ",", preamble: 0, wattsConverted: false };
+    const lines = String(text).replace(/^﻿/, "").replace(/\r/g, "").split("\n").filter(l => l.trim());
+    if (!lines.length) { errors.push("Empty input."); return res; }
+    // (2) find the real header row: first row with a timestamp-like and a power-like header
+    let hi = -1; for (let i = 0; i < Math.min(lines.length, 300); i++) { const c = seriesCols(splitCsvLine(lines[i], detectDelimiter(lines[i]))); if (c.ts >= 0 && (c.total || c.phases.length)) { hi = i; break; } }
+    if (hi < 0) { hi = 0; for (let i = 0; i + 1 < Math.min(lines.length, 300); i++) { const a = splitCsvLine(lines[i], detectDelimiter(lines[i])), b = splitCsvLine(lines[i + 1], detectDelimiter(lines[i + 1])); if (a.length >= 2 && a.length === b.length) { hi = i; break; } } }
+    const delim = detectDelimiter(lines[hi]), raw = splitCsvLine(lines[hi], delim); res.headers = raw; res.delimiter = delim; res.preamble = hi; res.sig = raw.join("");
+    if (hi > 0) warnings.push("Skipped " + hi + " preamble line(s) before the header row.");
+    const cols = seriesCols(raw), mp = opts.map || {}, setIdx = f => { const v = mp[f]; return v ? raw.indexOf(v) : -1; };
+    Object.keys(mp).forEach(f => { const idx = setIdx(f), has = idx >= 0;
+      if (f === "ts") cols.ts = has ? idx : -1; else if (f === "kw") cols.total = has ? { idx, unit: (seriesHeader(raw[idx]).bu === "w" || seriesHeader(raw[idx]).bu === "mw") ? "w" : seriesHeader(raw[idx]).bu === "kw" ? "kw" : null, rank: 0 } : null;
+      else if (/^l[123]$/.test(f)) { const n = +f[1]; cols.phases = cols.phases.filter(p => p.n !== n); if (has) cols.phases.push({ n, idx, unit: (seriesHeader(raw[idx]).bu === "w") ? "w" : seriesHeader(raw[idx]).bu === "kw" ? "kw" : null }); cols.phases.sort((a, b) => a.n - b.n); }
+      else if (f === "kva") cols.kva = has ? { idx, unit: seriesHeader(raw[idx]).bu === "va" ? "va" : "kva" } : null; else if (f === "pf") cols.pf = has ? idx : -1; });
+    const mapping = {}; if (cols.ts >= 0) mapping.ts = raw[cols.ts]; if (cols.total) mapping.kw = raw[cols.total.idx]; cols.phases.forEach(p => mapping["l" + p.n] = raw[p.idx]); if (cols.kva) mapping.kva = raw[cols.kva.idx]; if (cols.pf >= 0) mapping.pf = raw[cols.pf];
+    res.mapping = mapping;
+    if (cols.ts < 0) res.unmapped.push("ts"); if (!cols.total && !cols.phases.length) res.unmapped.push("kw");
+    if (res.unmapped.length) { res.needsMapping = true; return res; }
+    // rows
+    const dec = c => delim === ";" && /^-?\d+,\d+$/.test(c) ? c.replace(",", ".") : c, cell = (c, i) => i >= 0 && i < c.length ? dec(c[i].trim()) : "";
+    const data = lines.slice(hi + 1).map(l => splitCsvLine(l, delim));
+    if (delim === ";" && data.some(c => c.some(v => /^-?\d+,\d+$/.test(v)))) warnings.push("Semicolon-separated file: decimal commas were read as decimal points.");
+    let dayFirstEv = false, monthFirstEv = false;
+    data.forEach(c => { const m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-]\d{2,4}/.exec(cell(c, cols.ts)); if (m) { if (+m[1] > 12) dayFirstEv = true; if (+m[2] > 12) monthFirstEv = true; } });
+    const monthFirst = monthFirstEv && !dayFirstEv; if (monthFirst) warnings.push("Dates look like mm/dd/yyyy (a second field above 12), so they were read month-first.");
+    // power values (raw units)
+    const recs = []; let badRows = 0;
+    data.forEach(c => { const tsText = cell(c, cols.ts); if (!tsText) { badRows++; return; }
+      const ph = cols.phases.map(p => num(cell(c, p.idx))), tot = cols.total ? num(cell(c, cols.total.idx)) : NaN, haveTot = isFinite(tot);
+      const sum = ph.length && ph.every(isFinite) ? ph.reduce((a, b) => a + b, 0) : NaN;
+      recs.push({ ts: tsText, tot: haveTot ? tot : NaN, sum, ph, kva: cols.kva ? num(cell(c, cols.kva.idx)) : NaN, pf: cols.pf >= 0 ? num(cell(c, cols.pf)) : NaN, kw: haveTot ? tot : sum }); });
+    if (!cols.total && cols.phases.length) warnings.push("No total power column: summed " + cols.phases.length + " per-phase column(s) (" + cols.phases.map(p => raw[p.idx]).join(", ") + ")." + (cols.phases.length < 3 ? " Fewer than 3 phases found, so the sum may be low." : ""));
+    // (1) watts -> kW
+    const vals = recs.map(r => r.kw).filter(isFinite), med = vals.length ? median(vals) : 0, hdrUnit = cols.total ? cols.total.unit : (cols.phases.some(p => p.unit === "w") ? "w" : cols.phases.every(p => p.unit === "kw") ? "kw" : null);
+    const mode = opts.unit === "w" || opts.unit === "kw" ? opts.unit : "auto"; let conv = false, why = "";
+    if (mode === "w") { conv = true; why = "you chose watts"; } else if (mode === "kw") conv = false;
+    else if (hdrUnit === "w") { conv = true; why = "the header says W, not kW"; }
+    else if (hdrUnit === "kw") { if (med > 5000 && opts.nameplate && opts.nameplate < 1000) warnings.push("Median reading is " + Math.round(med) + " but the header says kW, and the nameplate is only " + opts.nameplate + " kW. If the values are watts, choose W in the column mapping."); }
+    else if (med > 5000 && opts.nameplate && opts.nameplate < 1000) { conv = true; why = "median " + Math.round(med) + " is far above a " + opts.nameplate + " kW nameplate"; }
+    if (conv) { res.wattsConverted = true; warnings.push("Power values treated as watts (" + why + "); divided by 1000 to give kW.");
+      recs.forEach(r => { r.kw /= 1000; r.tot /= 1000; r.sum /= 1000; }); }
+    const kvaVals = recs.map(r => r.kva).filter(isFinite);
+    if (cols.kva && kvaVals.length && (cols.kva.unit === "va" || (conv && median(kvaVals) > 5000))) recs.forEach(r => { r.kva /= 1000; });
+    // timestamps -> series points
+    const pts = [], seen = new Set(); let day = 0, prevClock = null, prevT = null, skipped = badRows, dups = 0, anyDated = false;
+    recs.forEach(r => { const ts = parseTimestamp(r.ts, { monthFirst });
+      if (!ts || !(r.kw >= 0) || !isFinite(r.kw)) { skipped++; return; }
+      let t = ts.t; if (ts.iso) anyDated = true;
       if (!ts.iso) { if (prevClock !== null && t < prevClock) day++; prevClock = t; t += day * 1440; }
-      if (prevT !== null && t <= prevT) { skipped++; return; } prevT = t; pts.push([t, kw]);
-    });
-    res.skipped = skipped; if (skipped) warnings.push(skipped + " row(s) skipped (bad timestamp, negative or non-numeric kW, or not increasing).");
-    if (pts.length < 10) { res.errors.push("Fewer than 10 usable rows."); return res; }
-    const diffs = []; for (let i = 1; i < pts.length; i++) diffs.push(pts[i][0] - pts[i - 1][0]);
+      if (seen.has(t)) { dups++; return; } if (prevT !== null && t < prevT) { skipped++; return; }
+      seen.add(t); prevT = t; pts.push({ t, kw: r.kw, r, iso: ts.iso }); });
+    res.skipped = skipped; res.duplicates = dups;
+    if (skipped) warnings.push(skipped + " row(s) skipped (bad timestamp, negative or non-numeric kW, or not increasing).");
+    if (dups) warnings.push(dups + " duplicate timestamp(s); the first reading for each was kept.");
+    if (pts.length < 10) { errors.push("Fewer than 10 usable rows."); return res; }
+    const diffs = []; for (let i = 1; i < pts.length; i++) diffs.push(pts[i].t - pts[i - 1].t);
     const step = median(diffs); res.step = step;
-    if (step < 0.99) { res.errors.push("Samples are closer than 1 minute; resample to 1-minute data first."); return res; }
-    if (step > 5.01) { res.errors.push("Sampling interval is about " + step.toFixed(1) + " min; need 1-minute data (5-minute is accepted with reduced accuracy)."); return res; }
-    if (step > 1.01) warnings.push("Sampling interval is " + step.toFixed(0) + " minutes. Each reading is held for the interval; heat edges, energy and holding-power estimates are less accurate than with 1-minute data.");
-    const t0 = Math.round(pts[0][0]), len = Math.round(pts[pts.length - 1][0]) - t0 + Math.max(1, Math.round(step));
-    const p = new Float64Array(len), seen = new Uint8Array(len); let max = 0;
-    pts.forEach((pt, i) => { const m = Math.round(pt[0]) - t0, nx = i + 1 < pts.length ? Math.round(pts[i + 1][0]) - t0 : m + Math.round(step), hold = Math.max(1, Math.min(nx - m, Math.round(step)));
-      for (let k = 0; k < hold && m + k < len; k++) { p[m + k] = pt[1]; seen[m + k] = 1; } if (pt[1] > max) max = pt[1]; });
-    let missing = 0; for (let i = 0; i < len; i++) if (!seen[i]) missing++;
-    if (missing) warnings.push(missing + " minute(s) have no reading; they are treated as 0 kW.");
-    if (opts.nameplate && max > 1.5 * opts.nameplate) warnings.push("Peak " + max.toFixed(0) + " kW is above the furnace nameplate; check units (kW, not W). Values are not clipped.");
+    if (step < 0.99) { errors.push("Samples are closer than 1 minute; resample to 1-minute data first."); return res; }
+    if (step > 10.01) { errors.push("Sampling interval is about " + step.toFixed(1) + " min; need 1-minute data (5- and 10-minute are accepted with reduced accuracy)."); return res; }
+    if (step > 1.01) warnings.push("Sampling interval is " + step.toFixed(0) + " minutes, not 1. Each reading is held for the interval; heat edges, energy and holding-power estimates are less accurate than with 1-minute data.");
+    const t0 = Math.round(pts[0].t), len = Math.round(pts[pts.length - 1].t) - t0 + Math.max(1, Math.round(step));
+    const p = new Float64Array(len), seenM = new Uint8Array(len); let max = 0;
+    pts.forEach((pt, i) => { const m = Math.round(pt.t) - t0, nx = i + 1 < pts.length ? Math.round(pts[i + 1].t) - t0 : m + Math.round(step), hold = Math.max(1, Math.min(nx - m, Math.round(step)));
+      for (let k = 0; k < hold && m + k < len; k++) { p[m + k] = pt.kw; seenM[m + k] = 1; } if (pt.kw > max) max = pt.kw;
+      if (i + 1 < pts.length && nx - m - hold > 0.5) res.gaps.push({ at: Math.round(pt.t) + hold, minutes: nx - m - hold }); });
+    let missing = 0; for (let i = 0; i < len; i++) if (!seenM[i]) missing++;
+    const clk = m => { m = ((Math.round(m) % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+    if (missing) warnings.push(missing + " minute(s) have no reading, in " + res.gaps.length + " gap(s) (first at " + clk(res.gaps[0].at) + "); they are treated as 0 kW.");
+    // (4) physical sanity checks: warnings only
+    const bad = { sum: [], kva: [], pf: [], pfm: [] };
+    pts.forEach(pt => { const r = pt.r, tol = x => Math.max(0.01 * Math.abs(x), 0.01);
+      if (isFinite(r.tot) && isFinite(r.sum) && r.ph.length >= 2 && Math.abs(r.tot - r.sum) > tol(Math.max(Math.abs(r.tot), Math.abs(r.sum)))) bad.sum.push(pt);
+      if (isFinite(r.kva) && isFinite(r.kw) && r.kva < r.kw - tol(r.kw)) bad.kva.push(pt);
+      if (isFinite(r.pf) && (r.pf < 0 || r.pf > 1)) bad.pf.push(pt);
+      else if (isFinite(r.pf) && isFinite(r.kva) && r.kva > 0 && isFinite(r.kw) && Math.abs(r.pf - r.kw / r.kva) > 0.02) bad.pfm.push(pt); });
+    const first = a => " (first at " + (a[0].iso ? new Date(a[0].t * 60000).toISOString().slice(0, 16).replace("T", " ") : clk(a[0].t)) + ")";
+    if (bad.sum.length) warnings.push("Total kW differs from the sum of the per-phase kW by more than 1% in " + bad.sum.length + " row(s)" + first(bad.sum) + ". Check which column is the total.");
+    if (bad.kva.length) warnings.push("kVA is below kW in " + bad.kva.length + " row(s)" + first(bad.kva) + ", which is physically impossible. Check the columns or units.");
+    if (bad.pf.length) warnings.push("Power factor is outside 0 to 1 in " + bad.pf.length + " row(s)" + first(bad.pf) + ". (A percentage, or a signed value?)");
+    if (bad.pfm.length) warnings.push("Power factor differs from kW/kVA by more than 0.02 in " + bad.pfm.length + " row(s)" + first(bad.pfm) + ".");
+    if (opts.nameplate && max > 1.5 * opts.nameplate) warnings.push("Peak " + max.toFixed(0) + " kW is above 1.5x the furnace nameplate; check units (kW, not W). Values are not clipped.");
+    if (anyDated) { const now = opts.now ? new Date(opts.now) : new Date(), nowMin = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes()) / 60000;
+      const fut = pts.filter(pt => pt.iso && pt.t > nowMin + 1); if (fut.length) warnings.push("Timestamps are in the future: check the instrument clock (" + fut.length + " row(s), latest " + new Date(fut[fut.length - 1].t * 60000).toISOString().slice(0, 16).replace("T", " ") + ")."); }
     res.p = p; res.t0 = ((t0 % 1440) + 1440) % 1440; res.n = pts.length; res.missing = missing; res.max = max; return res;
   }
   const defaultMeltThreshold = nameplateKw => (nameplateKw < 1000 ? 100 : 200);
@@ -475,6 +568,6 @@
 
   return { BASE, pyround, pyFloat, multMinute, avgm, meltMin, makeRng, makeDay, baselinePlan, planDP, evaluate, study, summarize,
     powerSeries, detectClean, matchHeats, calibrate, sha256, buildChain, verifyChain, rechainFrom, payload, receiptFromReadings, parseClock, parseCsv, ZERO,
-    exportChain, parseChainJson, verifyChainDetail, splitCsvLine, readCsv, detectDelimiter, headerKey, autoMap, parseHeatLog, logStats, parseTimestamp, parseSeries, defaultMeltThreshold,
+    exportChain, parseChainJson, verifyChainDetail, splitCsvLine, readCsv, detectDelimiter, headerKey, autoMap, parseHeatLog, logStats, parseTimestamp, parseSeries, seriesCols, defaultMeltThreshold,
     describeDetected, matchLog, seriesReceipts, compareLog, median, reportHtml };
 });

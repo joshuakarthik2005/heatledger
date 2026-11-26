@@ -48,13 +48,13 @@
  </div>
  <div id="mSer" style="display:none">
  <div class="card"><h2>Meter series</h2><p class="mut">CSV columns: <span class="hash">timestamp,kw</span>. Timestamp is ISO (2026-01-31T06:00) or HH:MM; 1-minute data is best, 5-minute data is accepted with reduced accuracy. kW values are never clipped.</p>
- <input type="file" id="sfile" accept=".csv,text/csv"> <p></p><textarea id="scsv" rows="6" placeholder="timestamp,kw&#10;06:00,12.4&#10;06:01,15.0"></textarea>
+ <input type="file" id="sfile" accept=".csv,text/csv"> <p></p><textarea id="scsv" rows="6" placeholder="Timestamp,Total_kW&#10;2026-11-27 06:00:00,12.4&#10;2026-11-27 06:01:00,15.0 (preamble lines, tab/semicolon files, dd/mm/yyyy and AM/PM are accepted)"></textarea>
  <div class="row" style="align-items:end"><div><label>Furnace nameplate kW</label><input id="np" type="number" value="550"></div>
   <div><label>Melt threshold kW (auto: 100 below 1000 kW nameplate, else 200)</label><input id="mt" type="number" value="100"></div>
   <div><label>Holding-power estimate kW</label><input id="he" type="number" value="100"></div>
   <div><label>Emission factor tCO₂/MWh</label><input id="ef2" type="number" step="0.001" value="0.710"></div></div>
  <p style="margin-top:10px"><button class="act" id="detect">Detect heats</button> <button class="act alt" id="sSample">Load synthetic sample series (generated, not real)</button></p>
- <div id="sWarn"></div></div>
+ <div id="sWarn"></div><div id="sMapBox"></div></div>
  <div class="card" id="detCard" style="display:none"><h2>Detected heats</h2><p class="mut">Enter tonnes per heat, or match to the heat log from the other mode. Leave tonnes blank to exclude a detection (for example a false positive).</p>
   <div class="row" style="align-items:end"><div><label>Heat-log day offset (days after the series' first day)</label><input id="dayOff" type="number" value="0" step="1"></div><div><button class="act alt" id="matchBtn">Match to heat log by time</button> <button class="act" id="issue">Issue receipts</button></div></div>
   <p class="mut" id="matchNote"></p><div class="tw" id="detTbl"></div></div>
